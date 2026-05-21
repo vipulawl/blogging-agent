@@ -29,6 +29,22 @@ def cmd_pipeline(_args):
     run_pipeline()
 
 
+def cmd_strategy(args):
+    from orchestrator import run_strategy
+    run_strategy(force=getattr(args, "force", False))
+
+
+def cmd_show_strategy(_args):
+    from storage.db import get_active_strategy
+    from orchestrator import _display_strategy
+    strategy = get_active_strategy()
+    if not strategy:
+        console.print("[yellow]No active strategy. Run: python main.py strategy[/yellow]")
+        return
+    console.print(f"[dim]Created: {strategy['created_at']}[/dim]")
+    _display_strategy(strategy)
+
+
 def cmd_list_topics(_args):
     from storage.db import get_all_topics
     topics = get_all_topics()
@@ -88,7 +104,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 commands:
-  research      Run research agent — finds 3-5 topics and adds them to the queue
+  strategy      Interactive strategy setup (interview + competitor research) — run first
+  show-strategy Show the active content strategy
+  research      Run research agent — finds 3-5 topics guided by your strategy
   write         Write + edit the highest-priority queued topic
   review        Review pending articles and approve/reject
   pipeline      research (if queue empty) → write → review
@@ -98,6 +116,10 @@ commands:
     )
     subparsers = parser.add_subparsers(dest="command")
 
+    strategy_p = subparsers.add_parser("strategy", help="Build/update content strategy (interactive)")
+    strategy_p.add_argument("--force", action="store_true", help="Replace existing strategy without asking")
+
+    subparsers.add_parser("show-strategy", help="Show active strategy")
     subparsers.add_parser("research", help="Research new topics")
 
     write_p = subparsers.add_parser("write", help="Write + edit an article")
@@ -111,6 +133,8 @@ commands:
     args = parser.parse_args()
 
     commands = {
+        "strategy": cmd_strategy,
+        "show-strategy": cmd_show_strategy,
         "research": cmd_research,
         "write": cmd_write,
         "review": cmd_review,

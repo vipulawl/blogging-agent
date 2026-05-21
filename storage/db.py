@@ -40,6 +40,27 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS strategy (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content_pillars TEXT DEFAULT '[]',
+                competitors TEXT DEFAULT '[]',
+                content_gaps TEXT DEFAULT '[]',
+                quick_wins TEXT DEFAULT '[]',
+                avoid_topics TEXT DEFAULT '[]',
+                strategic_summary TEXT,
+                interview_data TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS competitor_posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                competitor_url TEXT NOT NULL,
+                post_url TEXT NOT NULL UNIQUE,
+                post_title TEXT,
+                discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
 
@@ -159,3 +180,62 @@ def reject_draft(draft_id: int) -> None:
         conn.execute("UPDATE drafts SET status = 'rejected' WHERE id = ?", (draft_id,))
         if draft:
             conn.execute("UPDATE topics SET status = 'rejected' WHERE id = ?", (draft["topic_id"],))
+
+
+# ── Strategy ──────────────────────────────────────────────────────────────────
+
+def save_strategy(data: dict, interview: dict = None) -> int:
+    with get_conn() as conn:
+        conn.execute("UPDATE strategy SET is_active = 0")
+        cursor = conn.execute(
+            """INSERT INTO strategy
+               (content_pillars, competitors, content_gaps, quick_wins, avoid_topics, strategic_summary, interview_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                json.dumps(data.get("content_pillars", [])),
+                json.dumps(data.get("competitors", [])),
+                json.dumps(data.get("content_gaps", [])),
+                json.dumps(data.get("quick_wins", [])),
+                json.dumps(data.get("avoid_topics", [])),
+                data.get("strategic_summary", ""),
+                json.dumps(interview or {}),
+            ),
+        )
+        return cursor.lastrowid
+
+
+def get_active_strategy() -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM strategy WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1").fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        for key in ("content_pillars", "competitors", "content_gaps", "quick_wins", "avoid_topics", "interview_data"):
+            d[key] = json.loads(d[key] or "[]")
+        return d
+
+
+# ── Competitor post tracking ───────────────────────────────────────────────────
+
+def get_known_post_urls(competitor_url: str) -> set[str]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT post_url FROM competitor_posts WHERE competitor_url = ?", (competitor_url,)
+        ).fetchall()
+        return {r["post_url"] for r in rows}
+
+
+def save_competitor_posts(competitor_url: str, posts: list[dict]) -> list[dict]:
+    """Save new posts; return only the ones not seen before."""
+    known = get_known_post_urls(competitor_url)
+    new_posts = [p for p in posts if p.get("url") and p["url"] not in known]
+    with get_conn() as conn:
+        for p in new_posts:
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO competitor_posts (competitor_url, post_url, post_title) VALUES (?, ?, ?)",
+                    (competitor_url, p["url"], p.get("title", "")),
+                )
+            except Exception:
+                pass
+    return new_posts
