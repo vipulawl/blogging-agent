@@ -1,0 +1,161 @@
+import sqlite3
+import json
+from datetime import datetime
+from pathlib import Path
+
+DB_PATH = Path("blogging_agent.db")
+
+
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with get_conn() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS topics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                keyword TEXT NOT NULL,
+                research_brief TEXT,
+                source TEXT DEFAULT 'web_search',
+                priority_score REAL DEFAULT 0.5,
+                status TEXT DEFAULT 'queued',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                topic_id INTEGER REFERENCES topics(id),
+                title TEXT,
+                slug TEXT,
+                meta_description TEXT,
+                tags TEXT DEFAULT '[]',
+                content TEXT,
+                version INTEGER DEFAULT 1,
+                edit_notes TEXT,
+                status TEXT DEFAULT 'draft',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+
+def save_topic(title: str, keyword: str, research_brief: str, source: str = "web_search", priority_score: float = 0.5) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO topics (title, keyword, research_brief, source, priority_score) VALUES (?, ?, ?, ?, ?)",
+            (title, keyword, research_brief, source, priority_score)
+        )
+        return cursor.lastrowid
+
+
+def get_next_topic() -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM topics WHERE status = 'queued' ORDER BY priority_score DESC, created_at ASC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE topics SET status = 'writing' WHERE id = ?", (row["id"],))
+        return dict(row)
+
+
+def get_topic_by_id(topic_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM topics WHERE id = ?", (topic_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_all_topics(status: str = None) -> list[dict]:
+    with get_conn() as conn:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM topics WHERE status = ? ORDER BY priority_score DESC, created_at DESC",
+                (status,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM topics ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
+
+def save_draft(topic_id: int, title: str, slug: str, meta_description: str, tags: list, content: str) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO drafts (topic_id, title, slug, meta_description, tags, content) VALUES (?, ?, ?, ?, ?, ?)",
+            (topic_id, title, slug, meta_description, json.dumps(tags), content)
+        )
+        conn.execute("UPDATE topics SET status = 'editing' WHERE id = ?", (topic_id,))
+        return cursor.lastrowid
+
+
+def get_latest_draft_for_topic(topic_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM drafts WHERE topic_id = ? ORDER BY created_at DESC LIMIT 1",
+            (topic_id,)
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["tags"] = json.loads(d["tags"] or "[]")
+        return d
+
+
+def save_edited_draft(draft_id: int, content: str, edit_notes: str, title: str = None, meta_description: str = None) -> None:
+    with get_conn() as conn:
+        draft = conn.execute("SELECT topic_id FROM drafts WHERE id = ?", (draft_id,)).fetchone()
+        if not draft:
+            return
+
+        fields = {"content": content, "edit_notes": edit_notes, "version": 2, "status": "edited",
+                  "updated_at": datetime.now().isoformat()}
+        if title:
+            fields["title"] = title
+        if meta_description:
+            fields["meta_description"] = meta_description
+
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(f"UPDATE drafts SET {set_clause} WHERE id = ?", (*fields.values(), draft_id))
+        conn.execute("UPDATE topics SET status = 'pending_approval' WHERE id = ?", (draft["topic_id"],))
+
+
+def get_pending_drafts() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT d.*, t.keyword
+            FROM drafts d
+            JOIN topics t ON d.topic_id = t.id
+            WHERE d.status = 'edited'
+            ORDER BY d.updated_at DESC
+        """).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tags"] = json.loads(d["tags"] or "[]")
+            result.append(d)
+        return result
+
+
+def approve_draft(draft_id: int) -> dict:
+    with get_conn() as conn:
+        conn.execute("UPDATE drafts SET status = 'approved' WHERE id = ?", (draft_id,))
+        row = conn.execute("""
+            SELECT d.*, t.keyword
+            FROM drafts d JOIN topics t ON d.topic_id = t.id
+            WHERE d.id = ?
+        """, (draft_id,)).fetchone()
+        conn.execute("UPDATE topics SET status = 'published' WHERE id = ?", (row["topic_id"],))
+        d = dict(row)
+        d["tags"] = json.loads(d["tags"] or "[]")
+        return d
+
+
+def reject_draft(draft_id: int) -> None:
+    with get_conn() as conn:
+        draft = conn.execute("SELECT topic_id FROM drafts WHERE id = ?", (draft_id,)).fetchone()
+        conn.execute("UPDATE drafts SET status = 'rejected' WHERE id = ?", (draft_id,))
+        if draft:
+            conn.execute("UPDATE topics SET status = 'rejected' WHERE id = ?", (draft["topic_id"],))
