@@ -1,0 +1,87 @@
+name: Build Blog Strategy
+
+# Run manually from GitHub UI: Actions → Build Blog Strategy → Run workflow
+# Fill in the 6 form fields — no terminal needed.
+on:
+  workflow_dispatch:
+    inputs:
+      niche:
+        description: "Blog niche — be specific (e.g. 'B2B SaaS marketing for early-stage founders')"
+        required: true
+      goal:
+        description: 'Primary goal'
+        type: choice
+        options:
+          - organic SEO traffic
+          - lead generation
+          - brand authority
+          - monetization
+        default: organic SEO traffic
+      target_reader:
+        description: "Target reader — one sentence (e.g. 'SaaS founders trying to reduce first-month churn')"
+        required: true
+      desired_action:
+        description: "Desired reader action (e.g. 'subscribe to newsletter', 'book a demo')"
+        required: true
+      avoid:
+        description: 'Topics / keywords to avoid (leave blank if none)'
+        required: false
+        default: ''
+      frequency:
+        description: 'Publishing frequency'
+        type: choice
+        options: [weekly, twice a week, daily, bi-weekly]
+        default: weekly
+
+permissions:
+  contents: write
+
+concurrency:
+  group: blog-strategy
+  cancel-in-progress: false
+
+jobs:
+  build-strategy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: blogging-agent
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: blogging-agent/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build strategy
+        env:
+          PROVIDER:        groq
+          GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
+          BLOG_NICHE:      ${{ inputs.niche }}
+          TARGET_AUDIENCE: ${{ inputs.target_reader }}
+          BLOG_TONE:       ${{ secrets.BLOG_TONE }}
+          REPO_DIR:        ${{ github.workspace }}
+          CONTENT_DIR:     ${{ vars.CONTENT_DIR }}
+          # CI interview inputs — read by run_strategy(auto=True)
+          STRATEGY_NICHE:          ${{ inputs.niche }}
+          STRATEGY_GOAL:           ${{ inputs.goal }}
+          STRATEGY_TARGET_READER:  ${{ inputs.target_reader }}
+          STRATEGY_DESIRED_ACTION: ${{ inputs.desired_action }}
+          STRATEGY_AVOID:          ${{ inputs.avoid }}
+          STRATEGY_FREQUENCY:      ${{ inputs.frequency }}
+        run: python main.py strategy --auto
+
+      - name: Persist strategy
+        run: |
+          cd ${{ github.workspace }}
+          git config user.name  "Blogging Agent"
+          git config user.email "bot@noreply.github.com"
+          git add -f blogging-agent/blogging_agent.db
+          git diff --staged --quiet \
+            || git commit -m "chore: update blog strategy [skip ci]" && git push

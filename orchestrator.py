@@ -14,10 +14,12 @@ from agents.research import ResearchAgent
 from agents.writer import WriterAgent
 from agents.editor import EditorAgent
 from agents.strategy import StrategyAgent
+from agents.refresh import RefreshAgent
 from storage.db import (
     get_next_topic, get_topic_by_id, get_pending_drafts,
     get_latest_draft_for_topic, approve_draft, reject_draft,
     get_active_strategy, save_strategy,
+    get_pending_refreshes, mark_refresh_done, was_recently_refreshed,
 )
 
 console = Console()
@@ -132,7 +134,154 @@ def run_pipeline():
     run_review()
 
 
-def run_strategy(force: bool = False):
+def run_refresh(max_articles: int = 2):
+    """
+    Scan published articles, pick stale candidates, run RefreshAgent on each,
+    then open a PR per refresh. Skips articles refreshed within the last 60 days.
+    """
+    candidates = _find_refresh_candidates(max_candidates=max_articles)
+    if not candidates:
+        console.print("[yellow]No refresh candidates found (all articles are recent or recently refreshed).[/yellow]")
+        return
+
+    console.print(f"\n[bold]{len(candidates)} article(s) flagged for refresh[/bold]")
+
+    for article in candidates:
+        age = article["age_days"]
+        signal = f"  [dim]Age: {age}d"
+        if article.get("declining_traffic"):
+            signal += f" | GA4 traffic –{article['declining_traffic']}%"
+        signal += "[/dim]"
+        console.print(f"\n[bold]{article['title']}[/bold]{signal}")
+        console.print(f"[dim]Keyword: {article['keyword']} | {article['file_path']}[/dim]\n")
+
+        console.print("[bold blue]Refresh Agent[/bold blue] — researching and rewriting...")
+        agent = RefreshAgent(_client())
+        saved = agent.refresh_article(article)
+
+        if not saved:
+            console.print("[dim]Agent determined no refresh needed — skipping.[/dim]")
+            continue
+
+        # Pull the saved refresh and create a PR
+        pending = get_pending_refreshes()
+        for r in pending:
+            if r["file_path"] == article["file_path"] and r["status"] == "pending":
+                pr_url = _open_pr_for_refresh(r)
+                if pr_url:
+                    console.print(f"[green]Refresh PR →[/green] {pr_url}")
+                mark_refresh_done(r["id"], "pr_created")
+                break
+
+
+def _find_refresh_candidates(max_candidates: int = 2) -> list[dict]:
+    """
+    Scan CONTENT_DIR for published markdown files and score by refresh need.
+    Scoring: older articles + GA4 declining traffic = higher priority.
+    """
+    from datetime import datetime
+    from tools.ga4 import get_declining_pages
+
+    repo_dir = Path(config.REPO_DIR).resolve() if config.REPO_DIR else Path.cwd()
+    content_dir = repo_dir / config.CONTENT_DIR
+    if not content_dir.exists():
+        return []
+
+    # Index GA4 declining pages by path for quick lookup
+    declining = {}
+    try:
+        for page in get_declining_pages(days=28):
+            if not page.get("error"):
+                declining[page["page_path"]] = page.get("decline_pct", 0)
+    except Exception:
+        pass
+
+    candidates = []
+    for md_file in sorted(content_dir.glob("*.md")):
+        if md_file.name == ".gitkeep":
+            continue
+
+        text = md_file.read_text(encoding="utf-8", errors="ignore")
+        fm, body = _parse_frontmatter(text)
+
+        if fm.get("status") not in (None, "published", ""):
+            continue
+
+        if was_recently_refreshed(str(md_file)):
+            continue
+
+        date_str = fm.get("date", "2020-01-01")
+        try:
+            age_days = (datetime.now() - datetime.fromisoformat(date_str[:10])).days
+        except Exception:
+            age_days = 0
+
+        if age_days < 60:
+            continue
+
+        slug = fm.get("slug", md_file.stem)
+        decline_pct = declining.get(f"/{slug}", 0) or declining.get(f"/{slug}/", 0)
+
+        score = age_days / 30 + (decline_pct / 10)  # months old + GA4 penalty
+
+        candidates.append({
+            "file_path": str(md_file),
+            "title": fm.get("title", md_file.stem),
+            "keyword": fm.get("keyword", fm.get("slug", "")),
+            "slug": slug,
+            "meta_description": fm.get("description", ""),
+            "date_published": date_str,
+            "age_days": age_days,
+            "declining_traffic": decline_pct or None,
+            "content": body,
+            "score": score,
+        })
+
+    return sorted(candidates, key=lambda x: x["score"], reverse=True)[:max_candidates]
+
+
+def _parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Parse simple YAML frontmatter (--- ... ---) from a markdown string."""
+    if not text.startswith("---"):
+        return {}, text
+    try:
+        end = text.index("---", 3)
+        fm_text = text[3:end].strip()
+        body = text[end + 3:].strip()
+        fm = {}
+        for line in fm_text.splitlines():
+            if ":" in line:
+                key, _, val = line.partition(":")
+                fm[key.strip()] = val.strip().strip('"').strip("'")
+        return fm, body
+    except ValueError:
+        return {}, text
+
+
+def run_strategy(force: bool = False, auto: bool = False):
+    # CI / GitHub Actions mode: read interview answers from env vars, no prompts
+    if auto:
+        interview = {
+            "niche":          os.environ.get("STRATEGY_NICHE", config.BLOG_NICHE),
+            "goal":           os.environ.get("STRATEGY_GOAL", "organic SEO traffic"),
+            "target_reader":  os.environ.get("STRATEGY_TARGET_READER", config.TARGET_AUDIENCE),
+            "desired_action": os.environ.get("STRATEGY_DESIRED_ACTION", ""),
+            "avoid":          os.environ.get("STRATEGY_AVOID", ""),
+            "frequency":      os.environ.get("STRATEGY_FREQUENCY", "weekly"),
+        }
+        console.print("[bold blue]Strategy Agent[/bold blue] (CI mode) — building strategy...")
+        for k, v in interview.items():
+            console.print(f"  [dim]{k}:[/dim] {v}")
+        console.print()
+        StrategyAgent(_client()).build_strategy(interview)
+        strategy = get_active_strategy()
+        if strategy:
+            _display_strategy(strategy)
+            console.print("\n[green]Strategy saved.[/green]")
+        else:
+            console.print("[red]Strategy agent did not save. Check logs.[/red]")
+        return
+
     existing = get_active_strategy()
     if existing and not force:
         console.print("\n[yellow]An active strategy already exists.[/yellow]")
@@ -261,55 +410,22 @@ def _display_strategy(strategy: dict):
 
 
 def _create_pr(draft: dict) -> str | None:
-    """
-    Write the article to CONTENT_DIR on a new branch and open a GitHub PR.
-    Merge the PR to approve (Vercel auto-deploys). Close to reject.
-    Returns the PR URL, or None if git/gh is not available.
-    """
+    """Write a new article to CONTENT_DIR on a branch and open a GitHub PR."""
     repo_dir = Path(config.REPO_DIR).resolve() if config.REPO_DIR else Path.cwd()
     date_str = datetime.now().strftime("%Y-%m-%d")
     slug = draft.get("slug") or "post"
-    branch = f"blog/{date_str}-{slug}"
+    content_dir = repo_dir / config.CONTENT_DIR
+    filepath = content_dir / f"{date_str}-{slug}.md"
 
-    def git(*args):
-        return subprocess.run(["git", *args], cwd=repo_dir, capture_output=True, text=True, check=True)
-
-    try:
-        # Remember current branch so we can return to it
-        current = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-
-        git("checkout", "-b", branch)
-
-        content_dir = repo_dir / config.CONTENT_DIR
-        content_dir.mkdir(parents=True, exist_ok=True)
-        filepath = content_dir / f"{date_str}-{slug}.md"
-        filepath.write_text(_build_markdown(draft))
-
-        git("add", str(filepath))
-        git("commit", "-m", f"blog: {draft['title']}")
-        git("push", "-u", "origin", branch)
-
-        pr_body = _build_pr_body(draft)
-        result = subprocess.run(
-            ["gh", "pr", "create",
-             "--title", draft["title"],
-             "--body", pr_body,
-             "--base", "main"],
-            cwd=repo_dir, capture_output=True, text=True
-        )
-        pr_url = result.stdout.strip() if result.returncode == 0 else None
-
-        git("checkout", current)
-        return pr_url
-
-    except subprocess.CalledProcessError as e:
-        console.print(f"[yellow]Git/PR step failed: {e.stderr.strip() or e}[/yellow]")
-        console.print("[dim]Falling back to local save. Run: python main.py review[/dim]")
-        try:
-            git("checkout", current)
-        except Exception:
-            pass
-        return None
+    return _open_pr(
+        repo_dir=repo_dir,
+        branch=f"blog/{date_str}-{slug}",
+        filepath=filepath,
+        content=_build_markdown(draft),
+        commit_msg=f"blog: {draft['title']}",
+        pr_title=draft["title"],
+        pr_body=_build_pr_body(draft),
+    )
 
 
 def _build_pr_body(draft: dict) -> str:
@@ -347,17 +463,96 @@ def _build_markdown(draft: dict) -> str:
     tags_yaml = "[" + ", ".join(f'"{t}"' for t in tags) + "]"
     title = (draft.get("title") or "").replace('"', '\\"')
     description = (draft.get("meta_description") or "").replace('"', '\\"')
+    keyword = (draft.get("keyword") or "").replace('"', '\\"')
 
     return f"""---
 title: "{title}"
 date: "{date_str}"
 slug: "{slug}"
 description: "{description}"
+keyword: "{keyword}"
 tags: {tags_yaml}
 status: published
 ---
 
 {draft['content']}"""
+
+
+def _open_pr(repo_dir: Path, branch: str, filepath: Path, content: str,
+             commit_msg: str, pr_title: str, pr_body: str) -> str | None:
+    """
+    Generic helper: create branch, write file, push, open PR, return to original branch.
+    Used by both new articles and content refreshes.
+    """
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=repo_dir, capture_output=True, text=True, check=True)
+
+    current = None
+    try:
+        current = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        git("checkout", "-b", branch)
+
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(content, encoding="utf-8")
+
+        git("add", str(filepath))
+        git("commit", "-m", commit_msg)
+        git("push", "-u", "origin", branch)
+
+        result = subprocess.run(
+            ["gh", "pr", "create", "--title", pr_title, "--body", pr_body, "--base", "main"],
+            cwd=repo_dir, capture_output=True, text=True
+        )
+        pr_url = result.stdout.strip() if result.returncode == 0 else None
+        git("checkout", current)
+        return pr_url
+
+    except subprocess.CalledProcessError as e:
+        console.print(f"[yellow]Git/PR step failed: {e.stderr.strip() or e}[/yellow]")
+        if current:
+            try:
+                git("checkout", current)
+            except Exception:
+                pass
+        return None
+
+
+def _open_pr_for_refresh(r: dict) -> str | None:
+    """Open a PR for a content refresh."""
+    repo_dir = Path(config.REPO_DIR).resolve() if config.REPO_DIR else Path.cwd()
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    slug = r.get("slug") or "refresh"
+    branch = f"refresh/{date_str}-{slug}"
+
+    # Rebuild the full markdown with updated content but same frontmatter structure
+    md_text = Path(r["file_path"]).read_text(encoding="utf-8")
+    fm, _ = _parse_frontmatter(md_text)
+    fm["description"] = r.get("meta_description") or fm.get("description", "")
+
+    # Reconstruct frontmatter lines
+    fm_lines = "\n".join(f'{k}: "{v}"' for k, v in fm.items())
+    updated_content = f"---\n{fm_lines}\n---\n\n{r['refreshed_content']}"
+
+    score = r.get("refresh_score", 1)
+    score_label = {1: "minor", 3: "moderate", 5: "major"}.get(score, str(score))
+    pr_body = f"""**Keyword:** `{r.get('keyword', '')}`
+**Refresh depth:** {score_label} (score {score}/5)
+
+### What changed
+{r.get('refresh_notes', '')}
+
+---
+*Content refresh by [Blogging Agent](https://github.com/vipulawl/blogging-agent) · Merge to update · Close to skip*"""
+
+    return _open_pr(
+        repo_dir=repo_dir,
+        branch=branch,
+        filepath=Path(r["file_path"]),
+        content=updated_content,
+        commit_msg=f"refresh: {r.get('title', slug)}",
+        pr_title=f"refresh: {r.get('title', slug)}",
+        pr_body=pr_body,
+    )
 
 
 def _save_output(draft: dict) -> str:

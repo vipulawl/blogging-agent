@@ -31,7 +31,12 @@ def cmd_pipeline(_args):
 
 def cmd_strategy(args):
     from orchestrator import run_strategy
-    run_strategy(force=getattr(args, "force", False))
+    run_strategy(force=getattr(args, "force", False), auto=getattr(args, "auto", False))
+
+
+def cmd_refresh(args):
+    from orchestrator import run_refresh
+    run_refresh(max_articles=getattr(args, "max_articles", 2))
 
 
 def cmd_show_strategy(_args):
@@ -116,8 +121,9 @@ commands:
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    strategy_p = subparsers.add_parser("strategy", help="Build/update content strategy (interactive)")
+    strategy_p = subparsers.add_parser("strategy", help="Build/update content strategy (interactive or --auto)")
     strategy_p.add_argument("--force", action="store_true", help="Replace existing strategy without asking")
+    strategy_p.add_argument("--auto", action="store_true", help="CI mode: read inputs from STRATEGY_* env vars")
 
     subparsers.add_parser("show-strategy", help="Show active strategy")
     subparsers.add_parser("research", help="Research new topics")
@@ -126,7 +132,11 @@ commands:
     write_p.add_argument("--topic-id", type=int, dest="topic_id", help="Specific topic ID (default: highest priority)")
 
     subparsers.add_parser("review", help="Review pending articles")
-    subparsers.add_parser("pipeline", help="Full pipeline: research → write → review")
+    subparsers.add_parser("pipeline", help="Full pipeline: research + write + PR")
+
+    refresh_p = subparsers.add_parser("refresh", help="Refresh stale published articles")
+    refresh_p.add_argument("--max", type=int, dest="max_articles", default=2, help="Max articles to refresh per run")
+
     subparsers.add_parser("list-topics", help="List all topics")
     subparsers.add_parser("list-drafts", help="List pending drafts")
 
@@ -139,6 +149,7 @@ commands:
         "write": cmd_write,
         "review": cmd_review,
         "pipeline": cmd_pipeline,
+        "refresh": cmd_refresh,
         "list-topics": cmd_list_topics,
         "list-drafts": cmd_list_drafts,
     }

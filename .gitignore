@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.db
+!blogging_agent.db
 google-credentials.json
 output/*
 !output/.gitkeep

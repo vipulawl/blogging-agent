@@ -1,0 +1,81 @@
+name: Blog Pipeline
+
+on:
+  schedule:
+    - cron: '0 9 * * 1-5'    # Mon–Fri 9am UTC — edit to your timezone
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to run'
+        type: choice
+        options: [pipeline, research, write, refresh]
+        default: pipeline
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Never run two pipeline jobs at the same time (would corrupt the DB)
+concurrency:
+  group: blog-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: blogging-agent
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so _create_pr() can branch from main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: blogging-agent/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "Blogging Agent"
+          git config user.email "bot@noreply.github.com"
+
+      - name: Write Google credentials (if configured)
+        if: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' }}
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
+
+      - name: Run
+        env:
+          PROVIDER:           groq
+          GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          BLOG_NICHE:         ${{ secrets.BLOG_NICHE }}
+          TARGET_AUDIENCE:    ${{ secrets.TARGET_AUDIENCE }}
+          BLOG_TONE:          ${{ secrets.BLOG_TONE }}
+          BLOG_LANGUAGE:      ${{ secrets.BLOG_LANGUAGE || 'English' }}
+          APPROVAL_MODE:      pr
+          CONTENT_DIR:        ${{ vars.CONTENT_DIR }}      # set in repo Variables, e.g. posts/
+          REPO_DIR:           ${{ github.workspace }}
+          GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
+          GSC_SITE_URL:       ${{ secrets.GSC_SITE_URL }}
+          GA4_PROPERTY_ID:    ${{ secrets.GA4_PROPERTY_ID }}
+          GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' && 'google-credentials.json' || '' }}
+          MAX_ARTICLES_PER_DAY: ${{ vars.MAX_ARTICLES_PER_DAY || '1' }}
+          MIN_QUEUE_SIZE:       ${{ vars.MIN_QUEUE_SIZE || '3' }}
+        run: python main.py ${{ github.event.inputs.action || 'pipeline' }}
+
+      - name: Persist state (commit DB back to repo)
+        if: always()
+        run: |
+          # Move to repo root so the path is correct
+          cd ${{ github.workspace }}
+          git add -f blogging-agent/blogging_agent.db 2>/dev/null || true
+          git diff --staged --quiet \
+            || git commit -m "chore: blog agent state [skip ci]" && git push || true

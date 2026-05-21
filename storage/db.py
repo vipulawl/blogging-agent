@@ -61,6 +61,21 @@ def init_db():
                 post_title TEXT,
                 discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS refreshes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT NOT NULL,
+                title TEXT,
+                keyword TEXT,
+                slug TEXT,
+                original_content TEXT,
+                refreshed_content TEXT,
+                meta_description TEXT,
+                refresh_notes TEXT,
+                refresh_score INTEGER DEFAULT 1,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
 
@@ -239,3 +254,47 @@ def save_competitor_posts(competitor_url: str, posts: list[dict]) -> list[dict]:
             except Exception:
                 pass
     return new_posts
+
+
+# ── Refresh tracking ──────────────────────────────────────────────────────────
+
+def save_refresh(file_path: str, title: str, keyword: str, slug: str,
+                 original_content: str, refreshed_content: str,
+                 meta_description: str, refresh_notes: str, refresh_score: int) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """INSERT INTO refreshes
+               (file_path, title, keyword, slug, original_content, refreshed_content,
+                meta_description, refresh_notes, refresh_score)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (file_path, title, keyword, slug, original_content, refreshed_content,
+             meta_description, refresh_notes, refresh_score),
+        )
+        return cursor.lastrowid
+
+
+def get_pending_refreshes() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM refreshes WHERE status = 'pending' ORDER BY refresh_score DESC, created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def mark_refresh_done(refresh_id: int, status: str = "pr_created") -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE refreshes SET status = ? WHERE id = ?", (status, refresh_id))
+
+
+def was_recently_refreshed(file_path: str, within_days: int = 60) -> bool:
+    """Prevent refreshing the same article too often."""
+    with get_conn() as conn:
+        cutoff = datetime.now().isoformat()[:10]
+        row = conn.execute(
+            """SELECT id FROM refreshes
+               WHERE file_path = ? AND status != 'rejected'
+               AND date(created_at) >= date(?, ?)
+               LIMIT 1""",
+            (file_path, cutoff, f"-{within_days} days"),
+        ).fetchone()
+        return row is not None
