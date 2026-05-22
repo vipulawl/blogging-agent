@@ -101,6 +101,39 @@ def cmd_list_drafts(_args):
     console.print(table)
 
 
+def cmd_schedule(args):
+    from orchestrator import run_schedule
+    run_schedule(
+        dry_run=getattr(args, "dry_run", False),
+        as_json=getattr(args, "json", False),
+    )
+
+
+def cmd_monitor(_args):
+    from orchestrator import run_monitor
+    run_monitor()
+
+
+def cmd_correct(_args):
+    from orchestrator import run_correction
+    run_correction()
+
+
+def cmd_dedup(args):
+    from dedup import DedupChecker
+    keyword = getattr(args, "keyword", "") or ""
+    title = getattr(args, "title", "") or keyword
+    if not keyword and not title:
+        console.print("[yellow]Provide --keyword or --title[/yellow]")
+        return
+    is_dup, reason, match = DedupChecker().check(title, keyword)
+    status = "[red]DUPLICATE[/red]" if is_dup else "[green]UNIQUE[/green]"
+    console.print(f"\nResult: {status}")
+    console.print(f"Reason: {reason}")
+    if match:
+        console.print(f"Nearest: {match.get('title')} (/{match.get('slug')})")
+
+
 def main():
     init_db()
 
@@ -115,6 +148,10 @@ commands:
   write         Write + edit the highest-priority queued topic
   review        Review pending articles and approve/reject
   pipeline      research (if queue empty) → write → review
+  schedule      Evaluate scheduling signals → publish/wait/research/requeue
+  monitor       Snapshot GSC+GA4 performance for all published posts
+  correct       Review underperformers and apply corrections
+  dedup         Check a keyword/title for duplicates in post memory
   list-topics   Show all topics and their status
   list-drafts   Show drafts awaiting your approval
         """,
@@ -140,6 +177,17 @@ commands:
     subparsers.add_parser("list-topics", help="List all topics")
     subparsers.add_parser("list-drafts", help="List pending drafts")
 
+    schedule_p = subparsers.add_parser("schedule", help="Evaluate scheduling signals and decide next action")
+    schedule_p.add_argument("--dry-run", action="store_true", dest="dry_run", help="Print decision without saving")
+    schedule_p.add_argument("--json", action="store_true", dest="json", help="Output decision as JSON (for GitHub Actions)")
+
+    subparsers.add_parser("monitor", help="Snapshot GSC/GA4 performance for all posts")
+    subparsers.add_parser("correct", help="Review flagged underperformers and apply corrections")
+
+    dedup_p = subparsers.add_parser("dedup", help="Check a keyword/title for duplicates")
+    dedup_p.add_argument("--keyword", type=str, default="", help="Keyword to check")
+    dedup_p.add_argument("--title", type=str, default="", help="Title to check")
+
     args = parser.parse_args()
 
     commands = {
@@ -152,6 +200,10 @@ commands:
         "refresh": cmd_refresh,
         "list-topics": cmd_list_topics,
         "list-drafts": cmd_list_drafts,
+        "schedule": cmd_schedule,
+        "monitor": cmd_monitor,
+        "correct": cmd_correct,
+        "dedup": cmd_dedup,
     }
 
     if args.command in commands:

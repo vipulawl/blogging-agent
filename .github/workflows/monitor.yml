@@ -1,0 +1,52 @@
+name: Performance Monitor
+
+on:
+  schedule:
+    - cron: "0 8 * * *"   # daily at 8am UTC
+  workflow_dispatch:
+
+concurrency:
+  group: blog-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: blogging-agent
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write Google credentials
+        if: ${{ vars.GOOGLE_CREDENTIALS_JSON != '' }}
+        run: echo '${{ vars.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
+
+      - name: Run monitor
+        env:
+          PROVIDER: ${{ vars.PROVIDER || 'groq' }}
+          GOOGLE_CREDENTIALS_FILE: google-credentials.json
+          GSC_SITE_URL: ${{ vars.GSC_SITE_URL }}
+          GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+          CONTENT_DIR: ${{ vars.CONTENT_DIR || 'posts/' }}
+          PERFORMANCE_CHECK_DAYS: ${{ vars.PERFORMANCE_CHECK_DAYS || '30' }}
+        run: python main.py monitor
+
+      - name: Persist DB
+        if: always()
+        run: |
+          git config user.name "blogging-agent[bot]"
+          git config user.email "blogging-agent@users.noreply.github.com"
+          git add -f blogging_agent.db 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: persist monitor snapshots [skip ci]"
+          git push

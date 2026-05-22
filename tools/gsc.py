@@ -58,6 +58,40 @@ def get_top_queries(days: int = 28) -> list[dict]:
         return [{"error": str(e)}]
 
 
+def get_page_performance(days: int = 90) -> list[dict]:
+    """Returns per-page GSC metrics: clicks, impressions, position, ctr."""
+    client = _get_client()
+    if not client:
+        return []
+
+    end_date = datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    try:
+        response = client.searchanalytics().query(
+            siteUrl=config.GSC_SITE_URL,
+            body={
+                "startDate": start_date,
+                "endDate": end_date,
+                "dimensions": ["page"],
+                "rowLimit": 500,
+            }
+        ).execute()
+
+        return [
+            {
+                "page": row["keys"][0],
+                "clicks": int(row.get("clicks", 0)),
+                "impressions": int(row.get("impressions", 0)),
+                "ctr": round(row.get("ctr", 0) * 100, 2),
+                "position": round(row.get("position", 0), 1),
+            }
+            for row in response.get("rows", [])
+        ]
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
 def get_rising_queries(days: int = 14) -> list[dict]:
     """Compare recent 7 days vs previous 7 days to find rising queries."""
     client = _get_client()

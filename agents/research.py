@@ -208,6 +208,14 @@ class ResearchAgent(BaseAgent):
         elif name == "get_google_trends":
             return get_google_trends(inputs["topic"])
         elif name == "save_topic":
+            from dedup import DedupChecker
+            is_dup, reason, match = DedupChecker().check(inputs["title"], inputs["keyword"])
+            if is_dup:
+                return {
+                    "skipped": True,
+                    "reason": f"Duplicate detected: {reason}",
+                    "nearest_match": match.get("title") if match else None,
+                }
             topic_id = save_topic(
                 title=inputs["title"],
                 keyword=inputs["keyword"],

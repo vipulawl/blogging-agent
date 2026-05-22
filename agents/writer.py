@@ -54,15 +54,27 @@ Writing rules:
 - End with a clear, actionable conclusion — no "In conclusion..."
 - Format: clean markdown. No HTML.
 
-Do 1–2 web searches if you need specific data or examples to make a point concrete. Then write the full article and save it."""
+Do 1–2 web searches if you need specific data or examples to make a point concrete. Then write the full article and save it.
+
+{link_candidates_section}"""
 
 class WriterAgent(BaseAgent):
     def write_article(self, topic: dict) -> None:
+        link_candidates = topic.get("link_candidates", [])
+        if link_candidates:
+            lines = ["Internal link candidates (link to these where naturally relevant):"]
+            for c in link_candidates:
+                lines.append(f"  - [{c['title']}](/{c['slug']}) — {c.get('summary', '')[:100]}")
+            link_section = "\n".join(lines)
+        else:
+            link_section = ""
+
         system = SYSTEM.format(
             niche=config.BLOG_NICHE or "general topics",
             audience=config.TARGET_AUDIENCE,
             tone=config.BLOG_TONE,
             language=config.BLOG_LANGUAGE,
+            link_candidates_section=link_section,
         )
         prompt = f"""Write a complete blog article from this research brief.
 

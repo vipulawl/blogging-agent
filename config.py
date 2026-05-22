@@ -60,5 +60,15 @@ MIN_QUEUE_SIZE = int(os.getenv("MIN_QUEUE_SIZE", "3"))
 # Max articles written per calendar day
 MAX_ARTICLES_PER_DAY = int(os.getenv("MAX_ARTICLES_PER_DAY", "1"))
 
+# ── Smart systems ────────────────────────────────────────────────────────────
+# Jaccard similarity threshold above which a topic is considered a duplicate
+DEDUP_THRESHOLD = float(os.getenv("DEDUP_THRESHOLD", "0.80"))
+# Days after publication before a post is eligible for performance flagging
+PERFORMANCE_CHECK_DAYS = int(os.getenv("PERFORMANCE_CHECK_DAYS", "30"))
+# Set to "true" in GitHub Actions to execute corrections without terminal prompts
+CORRECTION_AUTO_MODE = os.getenv("CORRECTION_AUTO_MODE", "false")
+# Max posts under 30 days old before scheduler slows down
+MAX_POSTS_IN_RAMP = int(os.getenv("MAX_POSTS_IN_RAMP", "3"))
+
 # ── Legacy ───────────────────────────────────────────────────────────────────
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")

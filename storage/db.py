@@ -76,6 +76,51 @@ def init_db():
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS scheduler_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                decision TEXT NOT NULL,
+                reason TEXT,
+                topic_id INTEGER,
+                score REAL DEFAULT 0.0
+            );
+
+            CREATE TABLE IF NOT EXISTS post_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT UNIQUE NOT NULL,
+                title TEXT,
+                keyword TEXT,
+                tags TEXT DEFAULT '[]',
+                summary TEXT,
+                semantic_fingerprint TEXT,
+                published_at TEXT,
+                word_count INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS performance_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT NOT NULL,
+                keyword TEXT,
+                snapshot_date TEXT NOT NULL,
+                gsc_clicks INTEGER DEFAULT 0,
+                gsc_impressions INTEGER DEFAULT 0,
+                gsc_position REAL DEFAULT 0.0,
+                gsc_ctr REAL DEFAULT 0.0,
+                ga4_sessions INTEGER DEFAULT 0,
+                health_score INTEGER DEFAULT 50,
+                flag TEXT DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS correction_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                slug TEXT NOT NULL,
+                flagged_at TEXT,
+                action TEXT,
+                reason TEXT,
+                executed_at TEXT,
+                check_after TEXT
+            );
         """)
 
 
@@ -298,3 +343,149 @@ def was_recently_refreshed(file_path: str, within_days: int = 60) -> bool:
             (file_path, cutoff, f"-{within_days} days"),
         ).fetchone()
         return row is not None
+
+
+# ── Scheduler decisions ───────────────────────────────────────────────────────
+
+def save_scheduler_decision(decision: str, reason: str, topic_id: int = None, score: float = 0.0) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO scheduler_decisions (decision, reason, topic_id, score) VALUES (?, ?, ?, ?)",
+            (decision, reason, topic_id, score),
+        )
+        return cursor.lastrowid
+
+
+def get_latest_scheduler_decision() -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM scheduler_decisions ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_published_count_last_n_days(days: int = 7) -> int:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM topics WHERE status = 'published' AND created_at >= datetime('now', ?)",
+            (f"-{days} days",),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+
+def get_published_today_count() -> int:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM topics WHERE status = 'published' AND date(created_at) = date('now')"
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+
+# ── Post memory ───────────────────────────────────────────────────────────────
+
+def save_post_memory(slug: str, title: str, keyword: str, tags: list,
+                     summary: str, semantic_fingerprint: str,
+                     published_at: str = None, word_count: int = 0) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """INSERT OR REPLACE INTO post_memory
+               (slug, title, keyword, tags, summary, semantic_fingerprint, published_at, word_count)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (slug, title, keyword, json.dumps(tags), summary, semantic_fingerprint,
+             published_at or datetime.now().isoformat()[:10], word_count),
+        )
+        return cursor.lastrowid
+
+
+def get_all_post_memory() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT * FROM post_memory ORDER BY published_at DESC").fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tags"] = json.loads(d["tags"] or "[]")
+            result.append(d)
+        return result
+
+
+def get_post_memory_count_last_n_days(days: int = 30) -> int:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM post_memory WHERE published_at >= date('now', ?)",
+            (f"-{days} days",),
+        ).fetchone()
+        return row["cnt"] if row else 0
+
+
+# ── Performance snapshots ─────────────────────────────────────────────────────
+
+def save_performance_snapshot(slug: str, keyword: str, gsc_clicks: int,
+                               gsc_impressions: int, gsc_position: float,
+                               gsc_ctr: float, ga4_sessions: int,
+                               health_score: int, flag: str = "") -> int:
+    snapshot_date = datetime.now().isoformat()[:10]
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """INSERT INTO performance_snapshots
+               (slug, keyword, snapshot_date, gsc_clicks, gsc_impressions,
+                gsc_position, gsc_ctr, ga4_sessions, health_score, flag)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (slug, keyword, snapshot_date, gsc_clicks, gsc_impressions,
+             gsc_position, gsc_ctr, ga4_sessions, health_score, flag),
+        )
+        return cursor.lastrowid
+
+
+def get_flagged_posts() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT DISTINCT s.* FROM performance_snapshots s
+               INNER JOIN (
+                 SELECT slug, MAX(snapshot_date) as max_date
+                 FROM performance_snapshots GROUP BY slug
+               ) latest ON s.slug = latest.slug AND s.snapshot_date = latest.max_date
+               WHERE s.flag != ''
+               ORDER BY s.health_score ASC""",
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_latest_snapshots() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT s.* FROM performance_snapshots s
+               INNER JOIN (
+                 SELECT slug, MAX(snapshot_date) as max_date
+                 FROM performance_snapshots GROUP BY slug
+               ) latest ON s.slug = latest.slug AND s.snapshot_date = latest.max_date
+               ORDER BY s.health_score DESC""",
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ── Correction log ────────────────────────────────────────────────────────────
+
+def save_correction_log(slug: str, action: str, reason: str, check_after: str = None) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute(
+            """INSERT INTO correction_log (slug, flagged_at, action, reason, check_after)
+               VALUES (?, ?, ?, ?, ?)""",
+            (slug, datetime.now().isoformat()[:10], action, reason, check_after),
+        )
+        return cursor.lastrowid
+
+
+def mark_correction_executed(log_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE correction_log SET executed_at = ? WHERE id = ?",
+            (datetime.now().isoformat(), log_id),
+        )
+
+
+def get_correction_log() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM correction_log ORDER BY flagged_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]

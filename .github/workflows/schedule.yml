@@ -1,0 +1,75 @@
+name: Smart Scheduler
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6 hours
+  workflow_dispatch:
+
+concurrency:
+  group: blog-scheduler
+  cancel-in-progress: false
+
+jobs:
+  schedule:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: blogging-agent
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scheduler
+        id: scheduler
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PROVIDER: ${{ vars.PROVIDER || 'groq' }}
+          BLOG_NICHE: ${{ vars.BLOG_NICHE }}
+          TARGET_AUDIENCE: ${{ vars.TARGET_AUDIENCE }}
+          BLOG_TONE: ${{ vars.BLOG_TONE }}
+          GOOGLE_CREDENTIALS_FILE: ${{ vars.GOOGLE_CREDENTIALS_FILE }}
+          GSC_SITE_URL: ${{ vars.GSC_SITE_URL }}
+          GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+          APPROVAL_MODE: pr
+          CONTENT_DIR: ${{ vars.CONTENT_DIR || 'posts/' }}
+          MAX_POSTS_IN_RAMP: ${{ vars.MAX_POSTS_IN_RAMP || '3' }}
+          DEDUP_THRESHOLD: ${{ vars.DEDUP_THRESHOLD || '0.80' }}
+        run: |
+          DECISION=$(python main.py schedule --json)
+          echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
+          echo "action=$(echo $DECISION | python -c 'import sys,json; print(json.load(sys.stdin)["decision"])')" >> "$GITHUB_OUTPUT"
+          echo "topic_id=$(echo $DECISION | python -c 'import sys,json; d=json.load(sys.stdin); print(d.get("topic_id") or "")')" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger write
+        if: steps.scheduler.outputs.action == 'publish'
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: blog-pipeline.yml
+          inputs: '{"action":"write","topic_id":"${{ steps.scheduler.outputs.topic_id }}"}'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger research
+        if: steps.scheduler.outputs.action == 'research'
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: blog-pipeline.yml
+          inputs: '{"action":"research"}'
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Persist DB
+        if: always()
+        run: |
+          git config user.name "blogging-agent[bot]"
+          git config user.email "blogging-agent@users.noreply.github.com"
+          git add -f blogging_agent.db 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: persist scheduler state [skip ci]"
+          git push

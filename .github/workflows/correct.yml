@@ -1,0 +1,57 @@
+name: Self-Correction
+
+on:
+  schedule:
+    - cron: "0 10 * * 1"   # every Monday at 10am UTC
+  workflow_dispatch:
+
+concurrency:
+  group: blog-corrector
+  cancel-in-progress: false
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: blogging-agent
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write Google credentials
+        if: ${{ vars.GOOGLE_CREDENTIALS_JSON != '' }}
+        run: echo '${{ vars.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
+
+      - name: Run corrector
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PROVIDER: ${{ vars.PROVIDER || 'groq' }}
+          BLOG_NICHE: ${{ vars.BLOG_NICHE }}
+          TARGET_AUDIENCE: ${{ vars.TARGET_AUDIENCE }}
+          BLOG_TONE: ${{ vars.BLOG_TONE }}
+          GOOGLE_CREDENTIALS_FILE: google-credentials.json
+          GSC_SITE_URL: ${{ vars.GSC_SITE_URL }}
+          GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+          APPROVAL_MODE: pr
+          CONTENT_DIR: ${{ vars.CONTENT_DIR || 'posts/' }}
+          CORRECTION_AUTO_MODE: "true"
+        run: python main.py correct
+
+      - name: Persist DB
+        if: always()
+        run: |
+          git config user.name "blogging-agent[bot]"
+          git config user.email "blogging-agent@users.noreply.github.com"
+          git add -f blogging_agent.db 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: persist correction log [skip ci]"
+          git push

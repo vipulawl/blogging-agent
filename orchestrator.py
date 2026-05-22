@@ -21,6 +21,8 @@ from storage.db import (
     get_active_strategy, save_strategy,
     get_pending_refreshes, mark_refresh_done, was_recently_refreshed,
 )
+from memory.post_index import PostIndex
+from dedup import DedupChecker
 
 console = Console()
 
@@ -54,6 +56,22 @@ def run_write(topic_id: int = None):
 
     console.print(f"\n[bold]Topic:[/bold] {topic['title']}")
     console.print(f"[dim]Keyword: {topic['keyword']} | Source: {topic['source']}[/dim]\n")
+
+    # Dedup check — warn but don't block (user chose this topic)
+    is_dup, dup_reason, _ = DedupChecker().check(topic["title"], topic["keyword"])
+    if is_dup:
+        console.print(f"[yellow]Warning: near-duplicate detected — {dup_reason}[/yellow]")
+        from rich.prompt import Prompt
+        choice = Prompt.ask("Proceed anyway?", choices=["y", "n"], default="n")
+        if choice != "y":
+            console.print("[dim]Skipped.[/dim]")
+            return
+
+    # Attach internal link candidates from post memory
+    index = PostIndex()
+    topic["link_candidates"] = index.get_link_candidates(
+        [topic["keyword"]] + topic.get("research_brief", "").split()[:10]
+    )
 
     console.print("[bold blue]Writer Agent[/bold blue] — writing article...")
     WriterAgent(_client()).write_article(topic)
@@ -117,6 +135,13 @@ def run_review():
         if choice == "a":
             approved = approve_draft(draft["id"])
             path = _save_output(approved)
+            PostIndex().add_post(
+                slug=approved.get("slug", ""),
+                title=approved.get("title", ""),
+                keyword=approved.get("keyword", ""),
+                tags=approved.get("tags", []),
+                content=approved.get("content", ""),
+            )
             console.print(f"[green]Approved →[/green] {path}\n")
         elif choice == "r":
             reject_draft(draft["id"])
@@ -132,6 +157,33 @@ def run_pipeline():
         run_research()
     run_write()
     run_review()
+
+
+def run_schedule(dry_run: bool = False, as_json: bool = False) -> dict:
+    from scheduler import evaluate
+    return evaluate(dry_run=dry_run, as_json=as_json)
+
+
+def run_monitor() -> None:
+    from monitor import run_monitor as _run_monitor
+    _run_monitor()
+
+
+def run_correction() -> None:
+    from agents.corrector import CorrectorAgent
+    from storage.db import get_flagged_posts
+    flagged = get_flagged_posts()
+    if not flagged:
+        console.print("[yellow]No flagged posts to correct. Run: python main.py monitor[/yellow]")
+        return
+    console.print(f"\n[bold blue]Corrector Agent[/bold blue] — reviewing {len(flagged)} flagged post(s)...")
+    decisions = CorrectorAgent(_client()).correct_posts()
+    for d in decisions:
+        if d.get("skipped"):
+            console.print(f"  [dim]Skipped:[/dim] {d['slug']}")
+        else:
+            color = {"rewrite": "yellow", "retitle": "cyan", "requeue": "magenta", "wait": "dim"}.get(d.get("action", ""), "white")
+            console.print(f"  [{color}]{d.get('action', '?')}[/{color}]: {d['slug']}")
 
 
 def run_refresh(max_articles: int = 2):
@@ -417,6 +469,14 @@ def _create_pr(draft: dict) -> str | None:
     content_dir = repo_dir / config.CONTENT_DIR
     filepath = content_dir / f"{date_str}-{slug}.md"
 
+    PostIndex().add_post(
+        slug=slug,
+        title=draft.get("title", ""),
+        keyword=draft.get("keyword", ""),
+        tags=draft.get("tags", []),
+        content=draft.get("content", ""),
+        published_at=date_str,
+    )
     return _open_pr(
         repo_dir=repo_dir,
         branch=f"blog/{date_str}-{slug}",
