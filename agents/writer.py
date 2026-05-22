@@ -60,6 +60,8 @@ Do 1–2 web searches if you need specific data or examples to make a point conc
 
 class WriterAgent(BaseAgent):
     def write_article(self, topic: dict) -> None:
+        self._topic_id = topic.get("id")
+        self._topic_title = topic.get("title")
         link_candidates = topic.get("link_candidates", [])
         if link_candidates:
             lines = ["Internal link candidates (link to these where naturally relevant):"]

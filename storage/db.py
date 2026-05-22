@@ -121,6 +121,37 @@ def init_db():
                 executed_at TEXT,
                 check_after TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT UNIQUE NOT NULL,
+                agent_name TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_seconds REAL,
+                status TEXT DEFAULT 'running',
+                error_message TEXT,
+                iterations INTEGER DEFAULT 0,
+                tokens_input INTEGER DEFAULT 0,
+                tokens_output INTEGER DEFAULT 0,
+                topic_id INTEGER,
+                topic_title TEXT,
+                trigger TEXT DEFAULT 'manual'
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                seq_num INTEGER NOT NULL,
+                tool_name TEXT NOT NULL,
+                inputs_json TEXT,
+                result_json TEXT,
+                result_preview TEXT,
+                success INTEGER DEFAULT 1,
+                error_message TEXT,
+                started_at TEXT,
+                duration_ms INTEGER DEFAULT 0
+            );
         """)
 
 
@@ -487,5 +518,121 @@ def get_correction_log() -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM correction_log ORDER BY flagged_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ── Agent run logging ─────────────────────────────────────────────────────────
+
+def create_agent_run(run_id: str, agent_name: str, started_at: str,
+                     topic_id: int = None, topic_title: str = None,
+                     trigger: str = "manual") -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO agent_runs
+               (run_id, agent_name, started_at, topic_id, topic_title, trigger)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (run_id, agent_name, started_at, topic_id, topic_title, trigger),
+        )
+
+
+def finish_agent_run(run_id: str, status: str, finished_at: str,
+                     duration_seconds: float, iterations: int,
+                     tokens_input: int, tokens_output: int,
+                     error_message: str = None) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE agent_runs SET
+               status=?, finished_at=?, duration_seconds=?, iterations=?,
+               tokens_input=?, tokens_output=?, error_message=?
+               WHERE run_id=?""",
+            (status, finished_at, duration_seconds, iterations,
+             tokens_input, tokens_output, error_message, run_id),
+        )
+
+
+def log_tool_call(run_id: str, seq_num: int, tool_name: str,
+                  inputs_json: str, result_json: str, result_preview: str,
+                  success: bool, error_message: str, started_at: str,
+                  duration_ms: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO agent_tool_calls
+               (run_id, seq_num, tool_name, inputs_json, result_json,
+                result_preview, success, error_message, started_at, duration_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, seq_num, tool_name, inputs_json, result_json,
+             result_preview, int(success), error_message, started_at, duration_ms),
+        )
+
+
+def get_agent_runs(limit: int = 20, agent_name: str = None,
+                   status: str = None) -> list[dict]:
+    with get_conn() as conn:
+        clauses, params = [], []
+        if agent_name:
+            clauses.append("agent_name = ?")
+            params.append(agent_name)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = conn.execute(
+            f"SELECT * FROM agent_runs {where} ORDER BY started_at DESC LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_agent_run_by_id(run_id: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_tool_calls_for_run(run_id: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM agent_tool_calls WHERE run_id = ? ORDER BY seq_num",
+            (run_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_agent_stats() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT
+               agent_name,
+               COUNT(*) as total_runs,
+               SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) as successes,
+               SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failures,
+               ROUND(AVG(duration_seconds), 1) as avg_duration_seconds,
+               ROUND(AVG(iterations), 1) as avg_iterations,
+               SUM(tokens_input) as total_tokens_input,
+               SUM(tokens_output) as total_tokens_output
+               FROM agent_runs
+               WHERE status IN ('success', 'failed')
+               GROUP BY agent_name
+               ORDER BY total_runs DESC"""
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_tool_stats(limit: int = 15) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT
+               tool_name,
+               COUNT(*) as total_calls,
+               SUM(CASE WHEN success=0 THEN 1 ELSE 0 END) as errors,
+               ROUND(AVG(duration_ms), 0) as avg_duration_ms
+               FROM agent_tool_calls
+               GROUP BY tool_name
+               ORDER BY total_calls DESC
+               LIMIT ?""",
+            (limit,),
         ).fetchall()
         return [dict(r) for r in rows]

@@ -38,6 +38,8 @@ Write edit_notes as a concise bullet list: what you changed and why."""
 
 class EditorAgent(BaseAgent):
     def edit_article(self, draft: dict) -> None:
+        self._topic_id = draft.get("topic_id")
+        self._topic_title = draft.get("title")
         prompt = f"""Edit and improve this draft article (draft_id: {draft['id']}).
 
 **Title:** {draft['title']}

@@ -134,6 +134,22 @@ def cmd_dedup(args):
         console.print(f"Nearest: {match.get('title')} (/{match.get('slug')})")
 
 
+def cmd_logs(args):
+    import logs as log_module
+    run_id = getattr(args, "run", None)
+    stats = getattr(args, "stats", False)
+    failed = getattr(args, "failed", False)
+    agent = getattr(args, "agent", None)
+    limit = getattr(args, "limit", 25)
+
+    if run_id:
+        log_module.show_run_detail(run_id)
+    elif stats:
+        log_module.show_stats()
+    else:
+        log_module.show_recent(limit=limit, agent_name=agent, failed_only=failed)
+
+
 def main():
     init_db()
 
@@ -152,6 +168,7 @@ commands:
   monitor       Snapshot GSC+GA4 performance for all published posts
   correct       Review underperformers and apply corrections
   dedup         Check a keyword/title for duplicates in post memory
+  logs          View agent run logs and performance dashboard
   list-topics   Show all topics and their status
   list-drafts   Show drafts awaiting your approval
         """,
@@ -188,6 +205,13 @@ commands:
     dedup_p.add_argument("--keyword", type=str, default="", help="Keyword to check")
     dedup_p.add_argument("--title", type=str, default="", help="Title to check")
 
+    logs_p = subparsers.add_parser("logs", help="View agent run logs and performance dashboard")
+    logs_p.add_argument("--run", type=str, default=None, metavar="ID", help="Show full trace for a specific run ID")
+    logs_p.add_argument("--stats", action="store_true", help="Show aggregate stats per agent and tool")
+    logs_p.add_argument("--failed", action="store_true", help="Show only failed runs")
+    logs_p.add_argument("--agent", type=str, default=None, help="Filter by agent name (e.g. research, writer)")
+    logs_p.add_argument("--limit", type=int, default=25, help="Number of runs to show (default: 25)")
+
     args = parser.parse_args()
 
     commands = {
@@ -204,6 +228,7 @@ commands:
         "monitor": cmd_monitor,
         "correct": cmd_correct,
         "dedup": cmd_dedup,
+        "logs": cmd_logs,
     }
 
     if args.command in commands:

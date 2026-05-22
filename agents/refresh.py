@@ -99,6 +99,7 @@ Do NOT save if the article is still fully current and competitive — explain th
 
 class RefreshAgent(BaseAgent):
     def refresh_article(self, article: dict) -> bool:
+        self._topic_title = article.get("title")
         """
         Review and refresh an article. Returns True if a refresh was saved, False if skipped.
         article dict: file_path, title, keyword, slug, date_published, age_days, content
