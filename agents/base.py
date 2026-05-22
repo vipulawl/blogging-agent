@@ -7,10 +7,10 @@ console = Console()
 
 
 class BaseAgent:
-    def __init__(self, client, model: str = None):
+    def __init__(self, client, model: str = None, provider: str = None):
         self.client = client
         import config as cfg
-        self.provider = cfg.PROVIDER
+        self.provider = provider or cfg.PROVIDER
         self.model = model or cfg.MODEL
         self._run_ctx = None
         # Subclasses can set these before calling run() for richer log metadata
@@ -46,7 +46,7 @@ class BaseAgent:
         with RunContext(agent_name, self._topic_id, self._topic_title) as ctx:
             self._run_ctx = ctx
             try:
-                if self.provider in ("groq", "ollama"):
+                if self.provider in ("groq", "ollama", "openai"):
                     result = self._run_openai(initial_message, system, tools, max_iterations)
                 else:
                     result = self._run_anthropic(initial_message, system, tools, max_iterations)

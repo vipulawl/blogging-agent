@@ -28,6 +28,11 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 STRATEGY_PROVIDER = os.getenv("STRATEGY_PROVIDER", "openai")
 STRATEGY_MODEL = os.getenv("STRATEGY_MODEL", OPENAI_MODEL)
 
+# Research Agent — tool-heavy (web search, SERP, GSC, competitors). OpenAI is much
+# more reliable at structured tool calls than Groq. Default: gpt-4o-mini (best value).
+RESEARCH_PROVIDER = os.getenv("RESEARCH_PROVIDER", "openai")
+RESEARCH_MODEL = os.getenv("RESEARCH_MODEL", os.getenv("OPENAI_RESEARCH_MODEL", "gpt-4o-mini"))
+
 # Resolved model name based on provider
 def _resolve_model():
     if PROVIDER == "groq":

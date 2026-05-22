@@ -56,6 +56,11 @@ jobs:
         env:
           PROVIDER:           groq
           GROQ_API_KEY:       ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL:       ${{ vars.OPENAI_MODEL || 'gpt-4o' }}
+          STRATEGY_PROVIDER:  openai
+          RESEARCH_PROVIDER:  openai
+          RESEARCH_MODEL:     ${{ vars.RESEARCH_MODEL || 'gpt-4o-mini' }}
           BLOG_NICHE:         ${{ secrets.BLOG_NICHE }}
           TARGET_AUDIENCE:    ${{ secrets.TARGET_AUDIENCE }}
           BLOG_TONE:          ${{ secrets.BLOG_TONE }}

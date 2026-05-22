@@ -57,9 +57,26 @@ def _strategy_client():
     return _client()
 
 
+def _research_client():
+    """
+    Client for the Research Agent. Uses OpenAI by default — reliable multi-tool
+    calls (web search, SERP, GSC, competitor analysis). Groq often emits malformed
+    tool calls on long agent loops. Falls back to the main provider if no key set.
+    """
+    if config.RESEARCH_PROVIDER == "openai" and config.OPENAI_API_KEY:
+        from openai import OpenAI
+        return OpenAI(api_key=config.OPENAI_API_KEY)
+    console.print("[yellow]OPENAI_API_KEY not set — research will use the main provider.[/yellow]")
+    return _client()
+
+
 def run_research():
     console.print("\n[bold blue]Research Agent[/bold blue] — finding topics...")
-    ResearchAgent(_client()).run_research()
+    ResearchAgent(
+        _research_client(),
+        model=config.RESEARCH_MODEL,
+        provider=config.RESEARCH_PROVIDER if config.OPENAI_API_KEY else config.PROVIDER,
+    ).run_research()
     console.print("[green]Done. Topics saved to queue.[/green]")
 
 
