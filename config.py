@@ -19,6 +19,15 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:70b")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
+# OpenAI — used for the Strategy Agent by default (better reasoning for competitor
+# analysis and content planning). Falls back to the main PROVIDER if key not set.
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
+# Which provider/model to use for the Strategy Agent specifically
+STRATEGY_PROVIDER = os.getenv("STRATEGY_PROVIDER", "openai")
+STRATEGY_MODEL = os.getenv("STRATEGY_MODEL", OPENAI_MODEL)
+
 # Resolved model name based on provider
 def _resolve_model():
     if PROVIDER == "groq":

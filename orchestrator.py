@@ -42,6 +42,21 @@ def _client():
         return anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
 
+def _strategy_client():
+    """
+    Client for the Strategy Agent. Uses OpenAI GPT-4o by default — significantly
+    better at competitor analysis, content gap reasoning, and strategic planning
+    than smaller open-source models. Falls back to the main provider if no
+    OPENAI_API_KEY is set.
+    """
+    if config.STRATEGY_PROVIDER == "openai" and config.OPENAI_API_KEY:
+        from openai import OpenAI
+        return OpenAI(api_key=config.OPENAI_API_KEY)
+    # fallback: use whatever the main provider is
+    console.print("[yellow]OPENAI_API_KEY not set — strategy will use the main provider.[/yellow]")
+    return _client()
+
+
 def run_research():
     console.print("\n[bold blue]Research Agent[/bold blue] — finding topics...")
     ResearchAgent(_client()).run_research()
@@ -325,7 +340,7 @@ def run_strategy(force: bool = False, auto: bool = False):
         for k, v in interview.items():
             console.print(f"  [dim]{k}:[/dim] {v}")
         console.print()
-        StrategyAgent(_client()).build_strategy(interview)
+        StrategyAgent(_strategy_client(), model=config.STRATEGY_MODEL).build_strategy(interview)
         strategy = get_active_strategy()
         if strategy:
             _display_strategy(strategy)
@@ -396,10 +411,11 @@ def run_strategy(force: bool = False, auto: bool = False):
         "frequency": frequency,
     }
 
+    model_label = config.STRATEGY_MODEL if config.OPENAI_API_KEY else config.MODEL
     console.print(f"\n[green]Got it.[/green] Researching your competitive landscape...\n")
-    console.print("[dim]This will search DuckDuckGo, scrape competitor sitemaps, and analyse keyword clusters.[/dim]\n")
+    console.print(f"[dim]Model: {model_label} — searching DuckDuckGo, scraping competitor sitemaps, analysing keyword clusters.[/dim]\n")
 
-    agent = StrategyAgent(_client())
+    agent = StrategyAgent(_strategy_client(), model=config.STRATEGY_MODEL)
     agent.build_strategy(interview)
 
     strategy = get_active_strategy()
