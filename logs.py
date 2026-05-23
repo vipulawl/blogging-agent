@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from rich.console import Console
@@ -6,6 +7,7 @@ from rich.panel import Panel
 from rich.columns import Columns
 from rich.text import Text
 from rich.rule import Rule
+from rich.markup import escape
 
 from storage.db import (
     get_agent_runs, get_agent_run_by_id, get_tool_calls_for_run,
@@ -45,6 +47,13 @@ def _fmt_duration(seconds) -> str:
     return f"{m}m {s:02d}s"
 
 
+def _fmt_ms(ms) -> str:
+    if ms is None:
+        return "—"
+    ms = int(ms)
+    return f"{ms / 1000:.2f}s" if ms >= 1000 else f"{ms}ms"
+
+
 def _fmt_ts(ts: str) -> str:
     if not ts:
         return "—"
@@ -55,8 +64,37 @@ def _fmt_ts(ts: str) -> str:
         return ts[:19]
 
 
-def show_recent(limit: int = 25, agent_name: str = None,
-                failed_only: bool = False) -> None:
+def _pretty_json(json_str: str, max_lines: int = 25) -> str:
+    if not json_str:
+        return ""
+    try:
+        obj = json.loads(json_str)
+        lines = json.dumps(obj, indent=2, default=str).splitlines()
+        if len(lines) > max_lines:
+            lines = lines[:max_lines] + [f"  ... ({len(lines) - max_lines} more lines)"]
+        return "\n".join(lines)
+    except Exception:
+        return (json_str or "")[:600]
+
+
+def _format_inputs_compact(inputs_json: str) -> str:
+    """Format inputs for the compact table view."""
+    if not inputs_json:
+        return ""
+    try:
+        inp = json.loads(inputs_json)
+        parts = []
+        for k, v in list(inp.items())[:4]:
+            v_str = str(v)
+            truncated = (v_str[:55] + "…") if len(v_str) > 55 else v_str
+            parts.append(f"{escape(k)}={escape(repr(truncated))}")
+        suffix = f"  [dim]+{len(inp) - 4} more[/dim]" if len(inp) > 4 else ""
+        return "\n".join(parts) + suffix
+    except Exception:
+        return escape((inputs_json or "")[:200])
+
+
+def show_recent(limit: int = 25, agent_name: str = None, failed_only: bool = False) -> None:
     status_filter = "failed" if failed_only else None
     runs = get_agent_runs(limit=limit, agent_name=agent_name, status=status_filter)
 
@@ -65,6 +103,32 @@ def show_recent(limit: int = 25, agent_name: str = None,
         title += f" — {agent_name}"
     if failed_only:
         title += " (failures only)"
+
+    console.print()
+
+    if runs:
+        total = len(runs)
+        successes = sum(1 for r in runs if r["status"] == "success")
+        failures = sum(1 for r in runs if r["status"] == "failed")
+        running = sum(1 for r in runs if r["status"] == "running")
+        completed = total - running
+        pct = f"{successes / completed * 100:.0f}%" if completed else "—"
+        avg_dur = (
+            sum(r["duration_seconds"] or 0 for r in runs if r.get("duration_seconds"))
+            / max(1, completed)
+        )
+        total_tokens = sum((r["tokens_input"] or 0) + (r["tokens_output"] or 0) for r in runs)
+
+        fail_color = "red" if failures else "dim"
+        panels = [
+            Panel(f"[bold]{total}[/bold]\n[dim]runs shown[/dim]", expand=True, border_style="dim"),
+            Panel(f"[bold green]{successes}[/bold green] [dim]({pct})[/dim]\n[dim]succeeded[/dim]", expand=True, border_style="green"),
+            Panel(f"[bold {fail_color}]{failures}[/bold {fail_color}]\n[dim]failed[/dim]", expand=True, border_style=fail_color),
+            Panel(f"[bold]{_fmt_duration(avg_dur)}[/bold]\n[dim]avg duration[/dim]", expand=True, border_style="dim"),
+            Panel(f"[bold]{total_tokens:,}[/bold]\n[dim]total tokens[/dim]", expand=True, border_style="dim"),
+        ]
+        console.print(Columns(panels, equal=True, expand=True))
+        console.print()
 
     table = Table(title=title, show_lines=False, border_style="dim")
     table.add_column("ID", style="dim", width=6, justify="right")
@@ -96,7 +160,6 @@ def show_recent(limit: int = 25, agent_name: str = None,
             r.get("trigger", "manual"),
         )
 
-    console.print()
     console.print(table)
 
     total = len(runs)
@@ -109,13 +172,13 @@ def show_recent(limit: int = 25, agent_name: str = None,
         f"[{'red' if failures else 'dim'}]{failures} failed[/{'red' if failures else 'dim'}][/dim]"
     )
     if runs:
-        console.print("[dim]For detail on a run: python main.py logs --run <ID>[/dim]\n")
+        console.print("[dim]Detail:  python main.py logs --run <ID>[/dim]")
+        console.print("[dim]Full JSON: python main.py logs --run <ID> --full[/dim]\n")
 
 
-def show_run_detail(run_id_or_db_id: str) -> None:
+def show_run_detail(run_id_or_db_id: str, full: bool = False) -> None:
     run = get_agent_run_by_id(run_id_or_db_id)
     if not run:
-        # Try by integer DB id
         runs = get_agent_runs(limit=1000)
         run = next((r for r in runs if str(r["id"]) == str(run_id_or_db_id)), None)
     if not run:
@@ -123,78 +186,173 @@ def show_run_detail(run_id_or_db_id: str) -> None:
         return
 
     color = _agent_color(run["agent_name"])
-    status_t = _status_text(run["status"])
+    is_failed = run["status"] == "failed"
 
     console.print()
     console.rule(
         f"[bold]Run #{run['id']} — [{color}]{run['agent_name']}[/{color}]  "
-        f"{status_t}[/bold]"
+        f"{_status_text(run['status'])}[/bold]"
     )
+    console.print()
 
-    meta_lines = [
+    # ── Metadata panels ──────────────────────────────────────────────────────────
+    left_lines = [
         f"[dim]Started:[/dim]   {_fmt_ts(run['started_at'])}",
         f"[dim]Finished:[/dim]  {_fmt_ts(run.get('finished_at', ''))}",
         f"[dim]Duration:[/dim]  {_fmt_duration(run.get('duration_seconds'))}",
-        f"[dim]Iterations:[/dim] {run.get('iterations', 0)}",
         f"[dim]Trigger:[/dim]   {run.get('trigger', 'manual')}",
     ]
     if run.get("topic_title"):
-        meta_lines.append(f"[dim]Topic:[/dim]     {run['topic_title']}")
+        left_lines.append(f"[dim]Topic:[/dim]     {escape(run['topic_title'])}")
+    if run.get("topic_id"):
+        left_lines.append(f"[dim]Topic ID:[/dim]  {run['topic_id']}")
+
+    right_lines = [
+        f"[bold]{run.get('iterations', 0) or 0}[/bold]  [dim]iterations / cycles[/dim]",
+    ]
     if run.get("tokens_input") or run.get("tokens_output"):
-        meta_lines.append(
-            f"[dim]Tokens:[/dim]    {run.get('tokens_input', 0):,} input / "
-            f"{run.get('tokens_output', 0):,} output"
+        right_lines.append(
+            f"[bold]{run.get('tokens_input', 0):,}[/bold] [dim]tokens in[/dim]"
         )
-    if run.get("error_message"):
-        meta_lines.append(f"[red]Error:[/red]     {run['error_message']}")
+        right_lines.append(
+            f"[bold]{run.get('tokens_output', 0):,}[/bold] [dim]tokens out[/dim]"
+        )
+    right_lines.append(f"[dim]Run ID:[/dim]  {run['run_id']}")
 
-    for line in meta_lines:
-        console.print(f"  {line}")
+    console.print(Columns([
+        Panel("\n".join(left_lines), title="[dim]Run Info[/dim]", border_style="dim", expand=True),
+        Panel("\n".join(right_lines), title="[dim]Usage[/dim]", border_style="dim", expand=True),
+    ], expand=True))
 
+    # ── Failure panel ─────────────────────────────────────────────────────────────
+    if is_failed and run.get("error_message"):
+        console.print()
+        console.print(Panel(
+            f"[bold red]{escape(run['error_message'])}[/bold red]",
+            title="[bold red]✗  Run Failed[/bold red]",
+            border_style="red",
+            padding=(1, 2),
+        ))
+
+    # ── Tool calls ────────────────────────────────────────────────────────────────
     tool_calls = get_tool_calls_for_run(run["run_id"])
     if not tool_calls:
-        console.print("\n  [dim](no tool calls recorded)[/dim]\n")
+        console.print("\n  [dim](no tool calls recorded for this run)[/dim]\n")
         return
 
+    failed_steps = [tc for tc in tool_calls if not tc["success"]]
+    total_tool_ms = sum(tc.get("duration_ms") or 0 for tc in tool_calls)
+
     console.print()
-    table = Table(title="Tool Call Trace", show_lines=False, border_style="dim")
-    table.add_column("#", width=4, justify="right", style="dim")
-    table.add_column("Tool", width=28)
-    table.add_column("Time", width=8, justify="right")
-    table.add_column("Result", min_width=40)
-    table.add_column("Inputs", max_width=50, no_wrap=True, style="dim")
+    console.rule(
+        f"[dim]Step Trace — {len(tool_calls)} steps"
+        + (f"  •  [red]{len(failed_steps)} failed[/red]" if failed_steps else "")
+        + f"  •  {_fmt_ms(total_tool_ms)} in tools[/dim]"
+    )
+    console.print()
 
-    for tc in tool_calls:
-        status_icon = "[green]✓[/green]" if tc["success"] else "[red]✗[/red]"
-        result_text = tc.get("result_preview") or ""
-        if tc.get("error_message") and not tc["success"]:
-            result_text = f"[red]{tc['error_message'][:80]}[/red]"
-        duration = (
-            f"{tc['duration_ms'] / 1000:.2f}s"
-            if tc.get("duration_ms") is not None
-            else "—"
-        )
+    if full:
+        for tc in tool_calls:
+            _print_tool_call_panel(tc)
+    else:
+        table = Table(show_lines=True, border_style="dim", expand=True)
+        table.add_column("#", width=5, justify="right")
+        table.add_column("Tool", width=28)
+        table.add_column("Time", width=8, justify="right")
+        table.add_column("Inputs", min_width=32)
+        table.add_column("Result / Error", min_width=36)
 
-        import json as _json
-        inputs_preview = ""
-        try:
-            inp = _json.loads(tc.get("inputs_json") or "{}")
-            inputs_preview = ", ".join(
-                f"{k}={repr(str(v))[:30]}"
-                for k, v in list(inp.items())[:3]
+        for tc in tool_calls:
+            ok = tc["success"]
+            seq_cell = Text(f"{'✓' if ok else '✗'} {tc['seq_num']}", style="green" if ok else "bold red")
+            tool_cell = Text(tc["tool_name"], style="green" if ok else "red")
+
+            if not ok:
+                err = tc.get("error_message") or (tc.get("result_preview") or "error")
+                result_cell = Text(f"ERROR: {err[:120]}", style="red")
+            else:
+                result_cell = Text((tc.get("result_preview") or "")[:120])
+
+            table.add_row(
+                seq_cell,
+                tool_cell,
+                _fmt_ms(tc.get("duration_ms")),
+                _format_inputs_compact(tc.get("inputs_json")),
+                result_cell,
             )
-        except Exception:
-            pass
 
-        table.add_row(
-            f"{status_icon} {tc['seq_num']}",
-            tc["tool_name"],
-            duration,
-            result_text[:100],
-            inputs_preview[:80],
-        )
+        console.print(table)
 
-    console.print(table)
+    # ── Failed step detail panels ─────────────────────────────────────────────────
+    if failed_steps:
+        console.print()
+        console.rule(f"[bold red]Failed Steps — {len(failed_steps)} of {len(tool_calls)}[/bold red]")
+        console.print()
+        for tc in failed_steps:
+            err_msg = tc.get("error_message") or (tc.get("result_preview") or "unknown error")
+            body_lines = [
+                f"[dim]Duration:[/dim] {_fmt_ms(tc.get('duration_ms'))}  "
+                f"[dim]|[/dim]  [dim]At:[/dim] {_fmt_ts(tc.get('started_at', ''))}",
+                "",
+                f"[bold red]Error:[/bold red] {escape(err_msg)}",
+            ]
+            if tc.get("inputs_json"):
+                pretty_in = _pretty_json(tc["inputs_json"], max_lines=20)
+                body_lines += ["", "[dim]── Inputs ──[/dim]", escape(pretty_in)]
+            if tc.get("result_json"):
+                pretty_res = _pretty_json(tc["result_json"], max_lines=20)
+                body_lines += ["", "[dim]── Result JSON ──[/dim]", escape(pretty_res)]
+
+            console.print(Panel(
+                "\n".join(body_lines),
+                title=f"[red]✗ Step #{tc['seq_num']} — {escape(tc['tool_name'])}[/red]",
+                border_style="red",
+                padding=(0, 2),
+            ))
+
+    # ── Footer ────────────────────────────────────────────────────────────────────
+    console.print()
+    status_line = "[green]All steps succeeded[/green]" if not failed_steps else f"[red]{len(failed_steps)} step(s) failed[/red]"
+    console.print(
+        f"[dim]{len(tool_calls)} steps  •  {status_line}  •  "
+        f"tool time: {_fmt_ms(total_tool_ms)}[/dim]"
+    )
+    if not full:
+        console.print(f"[dim]Full JSON:  python main.py logs --run {run_id_or_db_id} --full[/dim]")
+    console.print()
+
+
+def _print_tool_call_panel(tc: dict) -> None:
+    ok = tc["success"]
+    border = "dim" if ok else "red"
+    status_icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
+
+    body_lines = [
+        f"[dim]Duration:[/dim] {_fmt_ms(tc.get('duration_ms'))}  "
+        f"[dim]|[/dim]  [dim]Started:[/dim] {_fmt_ts(tc.get('started_at', ''))}",
+    ]
+
+    if not ok:
+        err = tc.get("error_message") or (tc.get("result_preview") or "unknown error")
+        body_lines += ["", f"[bold red]Error:[/bold red] {escape(err)}"]
+
+    if tc.get("inputs_json"):
+        pretty_in = _pretty_json(tc["inputs_json"], max_lines=30)
+        body_lines += ["", "[dim]── Inputs ──[/dim]", escape(pretty_in)]
+
+    if tc.get("result_json"):
+        pretty_res = _pretty_json(tc["result_json"], max_lines=40)
+        label = "[red]── Result (error) ──[/red]" if not ok else "[dim]── Result ──[/dim]"
+        body_lines += ["", label, escape(pretty_res)]
+    elif tc.get("result_preview"):
+        body_lines += ["", "[dim]── Result ──[/dim]", escape(tc["result_preview"])]
+
+    console.print(Panel(
+        "\n".join(body_lines),
+        title=f"{status_icon} [bold]Step #{tc['seq_num']}[/bold] — [{('red' if not ok else 'green')}]{escape(tc['tool_name'])}[/{'red' if not ok else 'green'}]",
+        border_style=border,
+        padding=(0, 1),
+    ))
     console.print()
 
 

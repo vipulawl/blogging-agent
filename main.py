@@ -141,9 +141,10 @@ def cmd_logs(args):
     failed = getattr(args, "failed", False)
     agent = getattr(args, "agent", None)
     limit = getattr(args, "limit", 25)
+    full = getattr(args, "full", False)
 
     if run_id:
-        log_module.show_run_detail(run_id)
+        log_module.show_run_detail(run_id, full=full)
     elif stats:
         log_module.show_stats()
     else:
@@ -211,6 +212,7 @@ commands:
     logs_p.add_argument("--failed", action="store_true", help="Show only failed runs")
     logs_p.add_argument("--agent", type=str, default=None, help="Filter by agent name (e.g. research, writer)")
     logs_p.add_argument("--limit", type=int, default=25, help="Number of runs to show (default: 25)")
+    logs_p.add_argument("--full", action="store_true", help="Expand each step with full JSON inputs and results")
 
     args = parser.parse_args()
 
