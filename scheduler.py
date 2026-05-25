@@ -1,10 +1,9 @@
 import json
 from datetime import datetime
 
-import config
 from storage.db import (
     get_all_topics, get_published_today_count, get_published_count_last_n_days,
-    get_post_memory_count_last_n_days, save_scheduler_decision,
+    save_scheduler_decision,
 )
 from dedup import DedupChecker
 from tools.gsc import get_top_queries
@@ -42,7 +41,6 @@ def evaluate(dry_run: bool = False, as_json: bool = False) -> dict:
     queued = get_all_topics(status="queued")
     published_today = get_published_today_count()
     published_7d = get_published_count_last_n_days(7)
-    in_ramp = get_post_memory_count_last_n_days(30)
 
     gsc_data = []
     try:
@@ -67,13 +65,6 @@ def evaluate(dry_run: bool = False, as_json: bool = False) -> dict:
             "topic_id": None,
             "score": 0.0,
         }
-    elif in_ramp > config.MAX_POSTS_IN_RAMP:
-        result = {
-            "decision": "wait",
-            "reason": f"{in_ramp} posts in ramp (< 30 days old) — waiting for them to gain traction before adding more",
-            "topic_id": None,
-            "score": 0.0,
-        }
     else:
         scored = [(t, _score_topic(t, gsc_data, dedup)) for t in queued]
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -82,8 +73,8 @@ def evaluate(dry_run: bool = False, as_json: bool = False) -> dict:
         result = {
             "decision": "publish",
             "reason": (
-                f"Queue has {len(queued)} topics, {published_7d} published in last 7 days, "
-                f"{in_ramp} in ramp. Best topic: '{best_topic['title']}' (score {best_score:.2f})"
+                f"Queue has {len(queued)} topics, {published_7d} published in last 7 days. "
+                f"Best topic: '{best_topic['title']}' (score {best_score:.2f})"
             ),
             "topic_id": best_topic["id"],
             "score": round(best_score, 4),

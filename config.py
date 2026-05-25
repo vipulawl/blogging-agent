@@ -81,8 +81,6 @@ DEDUP_THRESHOLD = float(os.getenv("DEDUP_THRESHOLD", "0.80"))
 PERFORMANCE_CHECK_DAYS = int(os.getenv("PERFORMANCE_CHECK_DAYS", "30"))
 # Set to "true" in GitHub Actions to execute corrections without terminal prompts
 CORRECTION_AUTO_MODE = os.getenv("CORRECTION_AUTO_MODE", "false")
-# Max posts under 30 days old before scheduler slows down
-MAX_POSTS_IN_RAMP = int(os.getenv("MAX_POSTS_IN_RAMP", "3"))
 
 # ── Legacy ───────────────────────────────────────────────────────────────────
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")
