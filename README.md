@@ -113,6 +113,8 @@ After setup, the entire pipeline runs itself. No local process needed.
 | `correct.yml` | Monday 10am UTC | Reviews flagged posts, applies corrections |
 | `blog-strategy.yml` | Manual only | Builds/updates your content strategy |
 
+Alternatively, run the local daemon (`python daemon.py`) for a single continuous process. Each 60-minute poll cycle works through a priority list: research → write → monitor (every 7 days) → correct (when posts are flagged) → refresh (every 14 days).
+
 The SQLite database is committed back to the repo after each run (`[skip ci]` commit) so state persists across Actions runs.
 
 ---
@@ -194,8 +196,7 @@ Runs every 6 hours on GitHub Actions. Evaluates these signals in order:
 
 1. **Already published today?** → `wait` (max 1 post/day)
 2. **Queue < 2 topics?** → `research` (fill the queue first)
-3. **Too many posts in ramp?** (posts < 30 days old, default limit: 3) → `wait` (let them gain traction)
-4. Otherwise → `publish`, picking the highest-scored queued topic
+3. Otherwise → `publish`, picking the highest-scored queued topic
 
 Topic scoring formula:
 ```
@@ -386,7 +387,6 @@ Without Google credentials, the pipeline uses DuckDuckGo only. With them, Resear
 | `DEDUP_THRESHOLD` | `0.80` | Jaccard similarity above which a topic is blocked as duplicate (0–1) |
 | `PERFORMANCE_CHECK_DAYS` | `30` | Minimum post age before performance flags apply |
 | `CORRECTION_AUTO_MODE` | `false` | Set `true` in CI to skip terminal confirmation |
-| `MAX_POSTS_IN_RAMP` | `3` | Scheduler slows down when more than this many posts are under 30 days old |
 
 ### Daemon / scheduling
 
