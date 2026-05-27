@@ -140,7 +140,8 @@ def init_db():
                 tokens_output INTEGER DEFAULT 0,
                 topic_id INTEGER,
                 topic_title TEXT,
-                trigger TEXT DEFAULT 'manual'
+                trigger TEXT DEFAULT 'manual',
+                run_summary TEXT
             );
 
             CREATE TABLE IF NOT EXISTS agent_tool_calls (
@@ -154,7 +155,8 @@ def init_db():
                 success INTEGER DEFAULT 1,
                 error_message TEXT,
                 started_at TEXT,
-                duration_ms INTEGER DEFAULT 0
+                duration_ms INTEGER DEFAULT 0,
+                quality_signal TEXT DEFAULT 'ok'
             );
         """)
         # Migrate existing DBs that pre-date these columns
@@ -162,6 +164,8 @@ def init_db():
             "ALTER TABLE topics ADD COLUMN pillar_name TEXT",
             "ALTER TABLE topics ADD COLUMN content_angle TEXT",
             "ALTER TABLE post_memory ADD COLUMN pillar_name TEXT",
+            "ALTER TABLE agent_runs ADD COLUMN run_summary TEXT",
+            "ALTER TABLE agent_tool_calls ADD COLUMN quality_signal TEXT DEFAULT 'ok'",
             "ALTER TABLE post_memory ADD COLUMN content_angle TEXT",
         ]:
             try:
@@ -582,30 +586,30 @@ def create_agent_run(run_id: str, agent_name: str, started_at: str,
 def finish_agent_run(run_id: str, status: str, finished_at: str,
                      duration_seconds: float, iterations: int,
                      tokens_input: int, tokens_output: int,
-                     error_message: str = None) -> None:
+                     error_message: str = None, run_summary: str = None) -> None:
     with get_conn() as conn:
         conn.execute(
             """UPDATE agent_runs SET
                status=?, finished_at=?, duration_seconds=?, iterations=?,
-               tokens_input=?, tokens_output=?, error_message=?
+               tokens_input=?, tokens_output=?, error_message=?, run_summary=?
                WHERE run_id=?""",
             (status, finished_at, duration_seconds, iterations,
-             tokens_input, tokens_output, error_message, run_id),
+             tokens_input, tokens_output, error_message, run_summary, run_id),
         )
 
 
 def log_tool_call(run_id: str, seq_num: int, tool_name: str,
                   inputs_json: str, result_json: str, result_preview: str,
                   success: bool, error_message: str, started_at: str,
-                  duration_ms: int) -> None:
+                  duration_ms: int, quality_signal: str = "ok") -> None:
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO agent_tool_calls
                (run_id, seq_num, tool_name, inputs_json, result_json,
-                result_preview, success, error_message, started_at, duration_ms)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                result_preview, success, error_message, started_at, duration_ms, quality_signal)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (run_id, seq_num, tool_name, inputs_json, result_json,
-             result_preview, int(success), error_message, started_at, duration_ms),
+             result_preview, int(success), error_message, started_at, duration_ms, quality_signal),
         )
 
 

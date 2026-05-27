@@ -103,5 +103,11 @@ Do any needed web searches, write the full article in markdown, then save it wit
                 tags=inputs.get("tags", []),
                 content=inputs["content"],
             )
-            return {"success": True, "draft_id": draft_id}
+            return {
+                "success": True,
+                "draft_id": draft_id,
+                "slug": inputs["slug"],
+                "title": inputs["title"],
+                "word_count": len(inputs["content"].split()),
+            }
         return {"error": f"Unknown tool: {name}"}

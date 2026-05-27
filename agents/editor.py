@@ -65,5 +65,9 @@ Review carefully, make substantive improvements, then save with save_edited_draf
                 title=inputs.get("title"),
                 meta_description=inputs.get("meta_description"),
             )
-            return {"success": True}
+            return {
+                "success": True,
+                "word_count": len(inputs["content"].split()),
+                "edit_notes": inputs["edit_notes"],
+            }
         return {"error": f"Unknown tool: {name}"}

@@ -176,6 +176,23 @@ def show_recent(limit: int = 25, agent_name: str = None, failed_only: bool = Fal
         console.print("[dim]Full JSON: python main.py logs --run <ID> --full[/dim]\n")
 
 
+_QUALITY_STYLES = {
+    "ok":      ("✓", "green"),
+    "skipped": ("⊘", "yellow"),
+    "empty":   ("○", "yellow"),
+    "sparse":  ("◔", "yellow"),
+    "no_data": ("–", "dim"),
+    "no_new":  ("–", "dim"),
+    "warn":    ("⚠", "yellow"),
+    "error":   ("✗", "red"),
+}
+
+
+def _quality_badge(signal: str) -> Text:
+    icon, style = _QUALITY_STYLES.get(signal or "ok", ("?", "dim"))
+    return Text(f"{icon} {signal or 'ok'}", style=style)
+
+
 def show_run_detail(run_id_or_db_id: str, full: bool = False) -> None:
     run = get_agent_run_by_id(run_id_or_db_id)
     if not run:
@@ -194,6 +211,17 @@ def show_run_detail(run_id_or_db_id: str, full: bool = False) -> None:
         f"{_status_text(run['status'])}[/bold]"
     )
     console.print()
+
+    # ── Run summary ───────────────────────────────────────────────────────────────
+    summary = run.get("run_summary") or ""
+    if summary:
+        console.print(Panel(
+            escape(summary),
+            title="[bold]Run Summary[/bold]",
+            border_style=color,
+            padding=(0, 2),
+        ))
+        console.print()
 
     # ── Metadata panels ──────────────────────────────────────────────────────────
     left_lines = [
@@ -258,12 +286,14 @@ def show_run_detail(run_id_or_db_id: str, full: bool = False) -> None:
         table = Table(show_lines=True, border_style="dim", expand=True)
         table.add_column("#", width=5, justify="right")
         table.add_column("Tool", width=28)
+        table.add_column("Signal", width=14)
         table.add_column("Time", width=8, justify="right")
-        table.add_column("Inputs", min_width=32)
-        table.add_column("Result / Error", min_width=36)
+        table.add_column("Inputs", min_width=28)
+        table.add_column("Result / Error", min_width=32)
 
         for tc in tool_calls:
             ok = tc["success"]
+            signal = tc.get("quality_signal") or ("error" if not ok else "ok")
             seq_cell = Text(f"{'✓' if ok else '✗'} {tc['seq_num']}", style="green" if ok else "bold red")
             tool_cell = Text(tc["tool_name"], style="green" if ok else "red")
 
@@ -276,12 +306,19 @@ def show_run_detail(run_id_or_db_id: str, full: bool = False) -> None:
             table.add_row(
                 seq_cell,
                 tool_cell,
+                _quality_badge(signal),
                 _fmt_ms(tc.get("duration_ms")),
                 _format_inputs_compact(tc.get("inputs_json")),
                 result_cell,
             )
 
         console.print(table)
+
+    # ── Edit notes panel (for editor runs) ────────────────────────────────────────
+    for tc in tool_calls:
+        if tc["tool_name"] == "save_edited_draft" and tc["success"]:
+            _print_edit_notes_panel(tc)
+            break
 
     # ── Failed step detail panels ─────────────────────────────────────────────────
     if failed_steps:
@@ -309,6 +346,22 @@ def show_run_detail(run_id_or_db_id: str, full: bool = False) -> None:
                 border_style="red",
                 padding=(0, 2),
             ))
+
+    # ── Sub-optimal steps ─────────────────────────────────────────────────────────
+    _SUBOPTIMAL = {"empty", "sparse", "skipped", "no_new"}
+    suboptimal = [tc for tc in tool_calls if tc.get("quality_signal") in _SUBOPTIMAL]
+    if suboptimal and not full:
+        console.print()
+        console.rule("[yellow]Sub-optimal Steps[/yellow]")
+        console.print()
+        for tc in suboptimal:
+            sig = tc.get("quality_signal", "")
+            icon, style = _QUALITY_STYLES.get(sig, ("?", "dim"))
+            console.print(
+                f"  [{style}]{icon}[/{style}] Step #{tc['seq_num']} [bold]{tc['tool_name']}[/bold] "
+                f"— [{style}]{sig}[/{style}]: {escape(tc.get('result_preview') or '')} "
+                f"[dim]({_fmt_ms(tc.get('duration_ms'))})[/dim]"
+            )
 
     # ── Footer ────────────────────────────────────────────────────────────────────
     console.print()
@@ -354,6 +407,42 @@ def _print_tool_call_panel(tc: dict) -> None:
         padding=(0, 1),
     ))
     console.print()
+
+
+def _print_edit_notes_panel(tc: dict) -> None:
+    """Render the editor's edit_notes and word count as a dedicated panel."""
+    try:
+        inputs = json.loads(tc.get("inputs_json") or "{}")
+        result = json.loads(tc.get("result_json") or "{}")
+        edit_notes = inputs.get("edit_notes", "")
+        word_count = result.get("word_count") or 0
+        title = inputs.get("title", "")
+        meta = inputs.get("meta_description", "")
+
+        lines = []
+        if word_count:
+            lines.append(f"[dim]Word count:[/dim] [bold]{word_count:,}[/bold]")
+        if title:
+            lines.append(f"[dim]Title updated:[/dim] {escape(title)}")
+        if meta:
+            lines.append(f"[dim]Meta updated:[/dim] {escape(meta)}")
+        if lines:
+            lines.append("")
+        if edit_notes:
+            lines.append("[dim]── Edit Notes ──[/dim]")
+            lines.append(escape(edit_notes))
+        else:
+            lines.append("[dim](no edit_notes recorded)[/dim]")
+
+        console.print()
+        console.print(Panel(
+            "\n".join(lines),
+            title="[magenta]Editor Changes[/magenta]",
+            border_style="magenta",
+            padding=(0, 2),
+        ))
+    except Exception:
+        pass
 
 
 def show_stats() -> None:
