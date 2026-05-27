@@ -6,7 +6,7 @@ from datetime import datetime
 
 from storage.db import (
     create_agent_run, finish_agent_run, log_tool_call as _db_log_tool,
-    get_tool_calls_for_run,
+    get_tool_calls_for_run, log_agent_iteration,
 )
 
 # Large article bodies — stored as preview + char count, not full text
@@ -276,6 +276,10 @@ class RunContext:
         )
         return False
 
+    @property
+    def current_iteration(self) -> int:
+        return self._iterations
+
     def mark_failed(self, error: str) -> None:
         self._error = error
 
@@ -285,6 +289,21 @@ class RunContext:
     def add_tokens(self, inp: int, out: int) -> None:
         self._tokens_input += inp
         self._tokens_output += out
+
+    def log_iteration(self, tokens_input: int, tokens_output: int, stop_reason: str,
+                      assistant_preview: str, tool_names: list,
+                      started_at: str, duration_ms: int) -> None:
+        log_agent_iteration(
+            run_id=self.run_id,
+            iteration_num=self._iterations,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            stop_reason=stop_reason,
+            assistant_preview=assistant_preview,
+            tool_names=tool_names,
+            started_at=started_at,
+            duration_ms=duration_ms,
+        )
 
     def log_tool_call(self, tool_name: str, inputs: dict, result,
                       duration_ms: int, error: str = None) -> None:
@@ -312,4 +331,5 @@ class RunContext:
             started_at=datetime.now().isoformat(),
             duration_ms=duration_ms,
             quality_signal=signal,
+            iteration_num=self._iterations,
         )

@@ -156,7 +156,21 @@ def init_db():
                 error_message TEXT,
                 started_at TEXT,
                 duration_ms INTEGER DEFAULT 0,
-                quality_signal TEXT DEFAULT 'ok'
+                quality_signal TEXT DEFAULT 'ok',
+                iteration_num INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_iterations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                iteration_num INTEGER NOT NULL,
+                tokens_input INTEGER DEFAULT 0,
+                tokens_output INTEGER DEFAULT 0,
+                stop_reason TEXT,
+                assistant_preview TEXT,
+                tool_names_json TEXT DEFAULT '[]',
+                started_at TEXT,
+                duration_ms INTEGER DEFAULT 0
             );
         """)
         # Migrate existing DBs that pre-date these columns
@@ -167,6 +181,7 @@ def init_db():
             "ALTER TABLE agent_runs ADD COLUMN run_summary TEXT",
             "ALTER TABLE agent_tool_calls ADD COLUMN quality_signal TEXT DEFAULT 'ok'",
             "ALTER TABLE post_memory ADD COLUMN content_angle TEXT",
+            "ALTER TABLE agent_tool_calls ADD COLUMN iteration_num INTEGER DEFAULT 0",
         ]:
             try:
                 conn.execute(migration)
@@ -601,16 +616,47 @@ def finish_agent_run(run_id: str, status: str, finished_at: str,
 def log_tool_call(run_id: str, seq_num: int, tool_name: str,
                   inputs_json: str, result_json: str, result_preview: str,
                   success: bool, error_message: str, started_at: str,
-                  duration_ms: int, quality_signal: str = "ok") -> None:
+                  duration_ms: int, quality_signal: str = "ok",
+                  iteration_num: int = 0) -> None:
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO agent_tool_calls
                (run_id, seq_num, tool_name, inputs_json, result_json,
-                result_preview, success, error_message, started_at, duration_ms, quality_signal)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                result_preview, success, error_message, started_at, duration_ms,
+                quality_signal, iteration_num)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (run_id, seq_num, tool_name, inputs_json, result_json,
-             result_preview, int(success), error_message, started_at, duration_ms, quality_signal),
+             result_preview, int(success), error_message, started_at, duration_ms,
+             quality_signal, iteration_num),
         )
+
+
+def log_agent_iteration(run_id: str, iteration_num: int, tokens_input: int,
+                        tokens_output: int, stop_reason: str, assistant_preview: str,
+                        tool_names: list, started_at: str, duration_ms: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO agent_iterations
+               (run_id, iteration_num, tokens_input, tokens_output, stop_reason,
+                assistant_preview, tool_names_json, started_at, duration_ms)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, iteration_num, tokens_input, tokens_output, stop_reason,
+             assistant_preview, json.dumps(tool_names), started_at, duration_ms),
+        )
+
+
+def get_iterations_for_run(run_id: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM agent_iterations WHERE run_id = ? ORDER BY iteration_num",
+            (run_id,),
+        ).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["tool_names"] = json.loads(d.get("tool_names_json") or "[]")
+            result.append(d)
+        return result
 
 
 def get_agent_runs(limit: int = 20, agent_name: str = None,

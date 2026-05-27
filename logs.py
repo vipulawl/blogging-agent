@@ -11,7 +11,7 @@ from rich.markup import escape
 
 from storage.db import (
     get_agent_runs, get_agent_run_by_id, get_tool_calls_for_run,
-    get_agent_stats, get_tool_stats,
+    get_agent_stats, get_tool_stats, get_iterations_for_run,
 )
 
 console = Console()
@@ -270,49 +270,53 @@ def show_run_detail(run_id_or_db_id: str, full: bool = False) -> None:
 
     failed_steps = [tc for tc in tool_calls if not tc["success"]]
     total_tool_ms = sum(tc.get("duration_ms") or 0 for tc in tool_calls)
+    iterations = get_iterations_for_run(run["run_id"])
 
-    console.print()
-    console.rule(
-        f"[dim]Step Trace — {len(tool_calls)} steps"
-        + (f"  •  [red]{len(failed_steps)} failed[/red]" if failed_steps else "")
-        + f"  •  {_fmt_ms(total_tool_ms)} in tools[/dim]"
-    )
-    console.print()
-
-    if full:
-        for tc in tool_calls:
-            _print_tool_call_panel(tc)
+    if iterations:
+        _show_merged_timeline(run, tool_calls, iterations, full=full)
     else:
-        table = Table(show_lines=True, border_style="dim", expand=True)
-        table.add_column("#", width=5, justify="right")
-        table.add_column("Tool", width=28)
-        table.add_column("Signal", width=14)
-        table.add_column("Time", width=8, justify="right")
-        table.add_column("Inputs", min_width=28)
-        table.add_column("Result / Error", min_width=32)
+        console.print()
+        console.rule(
+            f"[dim]Step Trace — {len(tool_calls)} steps"
+            + (f"  •  [red]{len(failed_steps)} failed[/red]" if failed_steps else "")
+            + f"  •  {_fmt_ms(total_tool_ms)} in tools[/dim]"
+        )
+        console.print()
 
-        for tc in tool_calls:
-            ok = tc["success"]
-            signal = tc.get("quality_signal") or ("error" if not ok else "ok")
-            seq_cell = Text(f"{'✓' if ok else '✗'} {tc['seq_num']}", style="green" if ok else "bold red")
-            tool_cell = Text(tc["tool_name"], style="green" if ok else "red")
+        if full:
+            for tc in tool_calls:
+                _print_tool_call_panel(tc)
+        else:
+            table = Table(show_lines=True, border_style="dim", expand=True)
+            table.add_column("#", width=5, justify="right")
+            table.add_column("Tool", width=28)
+            table.add_column("Signal", width=14)
+            table.add_column("Time", width=8, justify="right")
+            table.add_column("Inputs", min_width=28)
+            table.add_column("Result / Error", min_width=32)
 
-            if not ok:
-                err = tc.get("error_message") or (tc.get("result_preview") or "error")
-                result_cell = Text(f"ERROR: {err[:120]}", style="red")
-            else:
-                result_cell = Text((tc.get("result_preview") or "")[:120])
+            for tc in tool_calls:
+                ok = tc["success"]
+                signal = tc.get("quality_signal") or ("error" if not ok else "ok")
+                seq_cell = Text(f"{'✓' if ok else '✗'} {tc['seq_num']}", style="green" if ok else "bold red")
+                tool_cell = Text(tc["tool_name"], style="green" if ok else "red")
 
-            table.add_row(
-                seq_cell,
-                tool_cell,
-                _quality_badge(signal),
-                _fmt_ms(tc.get("duration_ms")),
-                _format_inputs_compact(tc.get("inputs_json")),
-                result_cell,
-            )
+                if not ok:
+                    err = tc.get("error_message") or (tc.get("result_preview") or "error")
+                    result_cell = Text(f"ERROR: {err[:120]}", style="red")
+                else:
+                    result_cell = Text((tc.get("result_preview") or "")[:120])
 
-        console.print(table)
+                table.add_row(
+                    seq_cell,
+                    tool_cell,
+                    _quality_badge(signal),
+                    _fmt_ms(tc.get("duration_ms")),
+                    _format_inputs_compact(tc.get("inputs_json")),
+                    result_cell,
+                )
+
+            console.print(table)
 
     # ── Edit notes panel (for editor runs) ────────────────────────────────────────
     for tc in tool_calls:
@@ -443,6 +447,114 @@ def _print_edit_notes_panel(tc: dict) -> None:
         ))
     except Exception:
         pass
+
+
+def _print_tool_call_inline(tc: dict) -> None:
+    """One-line tool call for inside a merged-timeline turn block."""
+    ok = tc["success"]
+    signal = tc.get("quality_signal") or ("error" if not ok else "ok")
+    icon, sig_style = _QUALITY_STYLES.get(signal or "ok", ("?", "dim"))
+
+    try:
+        inp = json.loads(tc.get("inputs_json") or "{}")
+        kv = []
+        for k, v in list(inp.items())[:3]:
+            v_str = str(v)
+            trunc = (v_str[:40] + "…") if len(v_str) > 40 else v_str
+            kv.append(f"{k}={repr(trunc)}")
+        extra = f" +{len(inp) - 3} more" if len(inp) > 3 else ""
+        inputs_str = ", ".join(kv) + extra
+    except Exception:
+        inputs_str = ""
+
+    result_str = ""
+    if not ok:
+        err = tc.get("error_message") or tc.get("result_preview") or "error"
+        result_str = f" → [red]ERROR: {escape(str(err)[:80])}[/red]"
+    elif tc.get("result_preview"):
+        result_str = f" → [dim]{escape(tc['result_preview'][:80])}[/dim]"
+
+    name_style = "red" if not ok else "green"
+    console.print(
+        f"    [{sig_style}]{icon}[/{sig_style}] "
+        f"[{name_style}]step {tc['seq_num']}  {escape(tc['tool_name'])}[/{name_style}]"
+        f"  [dim]({_fmt_ms(tc.get('duration_ms'))})[/dim]"
+        f"  [dim]{escape(inputs_str[:70])}[/dim]"
+        f"{result_str}"
+    )
+
+
+def _show_merged_timeline(run: dict, tool_calls: list, iterations: list, full: bool = False) -> None:
+    """Interleave LLM reasoning turns and tool calls in chronological order."""
+    color = _agent_color(run["agent_name"])
+
+    # Group tool calls by the iteration that requested them
+    iter_tools: dict[int, list] = {}
+    for tc in tool_calls:
+        n = tc.get("iteration_num") or 0
+        iter_tools.setdefault(n, []).append(tc)
+
+    n_total = len(iterations)
+    failed_count = sum(1 for tc in tool_calls if not tc["success"])
+    total_tool_ms = sum(tc.get("duration_ms") or 0 for tc in tool_calls)
+
+    console.print()
+    console.rule(
+        f"[dim]Merged Timeline — {n_total} LLM turn(s)  •  {len(tool_calls)} tool call(s)"
+        + (f"  •  [red]{failed_count} failed[/red]" if failed_count else "")
+        + f"  •  {_fmt_ms(total_tool_ms)} in tools[/dim]"
+    )
+
+    for it in iterations:
+        n = it["iteration_num"]
+        tok_in = it.get("tokens_input") or 0
+        tok_out = it.get("tokens_output") or 0
+        stop = it.get("stop_reason") or ""
+        dur = _fmt_ms(it.get("duration_ms"))
+
+        stop_style = "green" if stop == "end_turn" else ("yellow" if stop == "tool_use" else "dim")
+
+        console.print()
+        console.rule(
+            f"[{color}]Turn {n}/{n_total}[/{color}]  "
+            f"[dim]{tok_in:,} in / {tok_out:,} out[/dim]  "
+            f"[{stop_style}]{stop or '?'}[/{stop_style}]"
+            f"[dim]  •  {dur}[/dim]",
+            style="dim",
+        )
+
+        preview = (it.get("assistant_preview") or "").strip()
+        if preview:
+            console.print()
+            console.print(Panel(
+                escape(preview),
+                title=f"[{color}]LLM reasoning[/{color}]",
+                border_style=color,
+                padding=(0, 2),
+            ))
+
+        turn_tools = iter_tools.get(n, [])
+        if turn_tools:
+            console.print()
+            if full:
+                for tc in turn_tools:
+                    _print_tool_call_panel(tc)
+            else:
+                for tc in turn_tools:
+                    _print_tool_call_inline(tc)
+
+    # Orphaned tool calls (no matching iteration — can happen in partially-logged old data)
+    orphans = iter_tools.get(0, [])
+    if orphans:
+        console.print()
+        console.rule("[dim]Unattributed tool calls[/dim]")
+        console.print()
+        if full:
+            for tc in orphans:
+                _print_tool_call_panel(tc)
+        else:
+            for tc in orphans:
+                _print_tool_call_inline(tc)
 
 
 def show_stats() -> None:

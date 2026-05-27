@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime
 from typing import Any
 from rich.console import Console
 
@@ -64,6 +65,9 @@ class BaseAgent:
         final_text = ""
 
         for _ in range(max_iterations):
+            turn_started_at = datetime.now().isoformat()
+            turn_start = time.monotonic()
+
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=8192,
@@ -71,13 +75,33 @@ class BaseAgent:
                 tools=tools,
                 messages=messages,
             )
+            turn_ms = int((time.monotonic() - turn_start) * 1000)
+
+            usage = response.usage
+            inp = getattr(usage, "input_tokens", 0)
+            out = getattr(usage, "output_tokens", 0)
+
             if self._run_ctx:
-                usage = response.usage
-                self._run_ctx.add_tokens(
-                    getattr(usage, "input_tokens", 0),
-                    getattr(usage, "output_tokens", 0),
-                )
+                self._run_ctx.add_tokens(inp, out)
                 self._run_ctx.increment_iteration()
+
+                assistant_text = ""
+                tool_names = []
+                for block in response.content:
+                    if hasattr(block, "text") and block.text and not assistant_text:
+                        assistant_text = block.text[:4000]
+                    if hasattr(block, "type") and block.type == "tool_use":
+                        tool_names.append(block.name)
+
+                self._run_ctx.log_iteration(
+                    tokens_input=inp,
+                    tokens_output=out,
+                    stop_reason=response.stop_reason or "",
+                    assistant_preview=assistant_text,
+                    tool_names=tool_names,
+                    started_at=turn_started_at,
+                    duration_ms=turn_ms,
+                )
 
             messages.append({"role": "assistant", "content": response.content})
 
@@ -114,6 +138,9 @@ class BaseAgent:
         final_text = ""
 
         for _ in range(max_iterations):
+            turn_started_at = datetime.now().isoformat()
+            turn_start = time.monotonic()
+
             response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=8192,
@@ -121,16 +148,32 @@ class BaseAgent:
                 messages=messages,
                 tool_choice="auto",
             )
-            if self._run_ctx:
-                usage = response.usage
-                if usage:
-                    self._run_ctx.add_tokens(
-                        getattr(usage, "prompt_tokens", 0),
-                        getattr(usage, "completion_tokens", 0),
-                    )
-                self._run_ctx.increment_iteration()
+            turn_ms = int((time.monotonic() - turn_start) * 1000)
+
+            usage = response.usage
+            inp = getattr(usage, "prompt_tokens", 0) if usage else 0
+            out = getattr(usage, "completion_tokens", 0) if usage else 0
 
             msg = response.choices[0].message
+            stop = response.choices[0].finish_reason or ""
+
+            if self._run_ctx:
+                self._run_ctx.add_tokens(inp, out)
+                self._run_ctx.increment_iteration()
+
+                assistant_text = (msg.content or "")[:4000]
+                tool_names = [tc.function.name for tc in (msg.tool_calls or [])]
+
+                self._run_ctx.log_iteration(
+                    tokens_input=inp,
+                    tokens_output=out,
+                    stop_reason=stop,
+                    assistant_preview=assistant_text,
+                    tool_names=tool_names,
+                    started_at=turn_started_at,
+                    duration_ms=turn_ms,
+                )
+
             messages.append({
                 "role": "assistant",
                 "content": msg.content,
