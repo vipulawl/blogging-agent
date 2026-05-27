@@ -37,6 +37,12 @@ def _resolve_model():
 
 MODEL = os.getenv("MODEL") or _resolve_model()
 
+# ── Product / website ─────────────────────────────────────────────────────────
+# URL of the product/service the blog promotes. Used by the Strategy Agent to
+# crawl your own site before searching for competitors, so research is grounded
+# in what you actually sell rather than the generic niche label.
+PRODUCT_URL = os.getenv("PRODUCT_URL", "")
+
 # ── Blog identity ─────────────────────────────────────────────────────────────
 BLOG_NICHE = os.getenv("BLOG_NICHE", "")
 TARGET_AUDIENCE = os.getenv("TARGET_AUDIENCE", "general readers")

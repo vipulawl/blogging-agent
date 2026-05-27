@@ -51,6 +51,7 @@ The minimum viable config (no Google APIs):
 PROVIDER=openai
 OPENAI_API_KEY=your_key_here      # get at platform.openai.com
 OPENAI_MODEL=gpt-4o-mini
+PRODUCT_URL=https://yourproduct.com   # the site/product the blog promotes
 BLOG_NICHE=SaaS marketing
 TARGET_AUDIENCE=early-stage startup founders
 BLOG_TONE=informative and practical
@@ -96,6 +97,7 @@ After setup, the entire pipeline runs itself. No local process needed.
 | Variable | Example |
 |---|---|
 | `PROVIDER` | `openai` |
+| `PRODUCT_URL` | `https://yourproduct.com` |
 | `BLOG_NICHE` | `SaaS marketing` |
 | `TARGET_AUDIENCE` | `early-stage startup founders` |
 | `BLOG_TONE` | `informative and practical` |
@@ -158,12 +160,13 @@ python main.py list-drafts          # list drafts pending review
 ### Strategy Agent
 
 Runs a 6-question interview in the terminal (or reads `STRATEGY_*` env vars in CI mode). Then it:
-- Searches DuckDuckGo to find competitors in your niche
-- Scrapes competitor sitemaps for recent posts
-- Maps content gaps and quick-win keywords
-- Stores content pillars that guide every future research run
+1. **Crawls your own product website first** (`PRODUCT_URL`) — homepage + key pages (features, pricing, about, use-cases). This grounds all subsequent research in what you actually sell, not just the niche label.
+2. Searches for competitors using product-specific queries (e.g. "alternatives to [your product category]", "[key feature] software for [target customer]") rather than generic niche searches
+3. Scrapes competitor sitemaps for recent posts
+4. Maps content gaps and quick-win keywords tied to your product's use cases
+5. Stores content pillars, a competitor list, and a **product summary** that is injected into every future research run
 
-All subsequent research runs are guided by this strategy.
+All subsequent research runs are guided by this strategy and grounded in your product context.
 
 ### Research Agent
 
@@ -409,6 +412,7 @@ Then add these **Variables** (non-sensitive, Settings → Secrets and variables 
 | `PROVIDER` | `openai` | AI provider: `openai`, `ollama`, `anthropic` |
 | `OPENAI_API_KEY` | — | Required if `PROVIDER=openai` |
 | `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model (used for all agents) |
+| `PRODUCT_URL` | — | Your product/service URL — crawled at strategy time to ground all research in what you sell |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama endpoint |
 | `OLLAMA_MODEL` | `llama3.1:70b` | Ollama model |
 | `ANTHROPIC_API_KEY` | — | Required if `PROVIDER=anthropic` |

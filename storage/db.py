@@ -51,6 +51,7 @@ def init_db():
                 quick_wins TEXT DEFAULT '[]',
                 avoid_topics TEXT DEFAULT '[]',
                 strategic_summary TEXT,
+                product_summary TEXT,
                 interview_data TEXT,
                 is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -182,6 +183,7 @@ def init_db():
             "ALTER TABLE agent_tool_calls ADD COLUMN quality_signal TEXT DEFAULT 'ok'",
             "ALTER TABLE post_memory ADD COLUMN content_angle TEXT",
             "ALTER TABLE agent_tool_calls ADD COLUMN iteration_num INTEGER DEFAULT 0",
+            "ALTER TABLE strategy ADD COLUMN product_summary TEXT",
         ]:
             try:
                 conn.execute(migration)
@@ -316,8 +318,9 @@ def save_strategy(data: dict, interview: dict = None) -> int:
         conn.execute("UPDATE strategy SET is_active = 0")
         cursor = conn.execute(
             """INSERT INTO strategy
-               (content_pillars, competitors, content_gaps, quick_wins, avoid_topics, strategic_summary, interview_data)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (content_pillars, competitors, content_gaps, quick_wins, avoid_topics,
+                strategic_summary, product_summary, interview_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 json.dumps(data.get("content_pillars", [])),
                 json.dumps(data.get("competitors", [])),
@@ -325,6 +328,7 @@ def save_strategy(data: dict, interview: dict = None) -> int:
                 json.dumps(data.get("quick_wins", [])),
                 json.dumps(data.get("avoid_topics", [])),
                 data.get("strategic_summary", ""),
+                data.get("product_summary", ""),
                 json.dumps(interview or {}),
             ),
         )
@@ -339,6 +343,8 @@ def get_active_strategy() -> dict | None:
         d = dict(row)
         for key in ("content_pillars", "competitors", "content_gaps", "quick_wins", "avoid_topics", "interview_data"):
             d[key] = json.loads(d[key] or "[]")
+        # product_summary is plain text, not JSON
+        d.setdefault("product_summary", "")
         return d
 
 

@@ -156,6 +156,13 @@ SYSTEM = """You are an expert SEO research agent. Your job is to find 3-5 high-p
 Blog niche: {niche}
 Target audience: {audience}
 
+── YOUR PRODUCT ────────────────────────────────────────────────────────────────
+{product_summary}
+
+Every topic you recommend must be relevant to a reader who would plausibly use this product.
+Every research_brief must explain how the topic connects to the product's use cases or the problems it solves.
+Do NOT recommend generic niche topics that have no connection to what the product does.
+
 Active content strategy:
 {strategy_context}
 
@@ -209,18 +216,25 @@ class ResearchAgent(BaseAgent):
         strategy = get_active_strategy()
         strategy_context = _format_strategy(strategy)
         pillar_coverage_context = _format_pillar_coverage(get_pillar_coverage(), strategy)
+        product_summary = (strategy or {}).get("product_summary", "") or (
+            f"Product URL: {config.PRODUCT_URL}" if config.PRODUCT_URL else
+            "No product summary available — search broadly within the niche."
+        )
 
         system = SYSTEM.format(
             niche=config.BLOG_NICHE or "general topics",
             audience=config.TARGET_AUDIENCE,
+            product_summary=product_summary,
             strategy_context=strategy_context,
             pillar_coverage_context=pillar_coverage_context,
         )
         prompt = (
             f"Research and find 3-5 high-potential blog topics for a '{config.BLOG_NICHE or 'general'}' blog. "
+            f"Each topic must be relevant to the product described above. "
             f"Check competitors for new posts, use keyword discovery for un-indexed topics, "
             f"and validate competition level before saving each topic. "
-            f"Assign each topic to its pillar and pick an angle not yet covered for that pillar."
+            f"Assign each topic to its pillar and pick an angle not yet covered for that pillar. "
+            f"Include in each research_brief how the topic connects to the product's features or use cases."
         )
         self.run(prompt, system, TOOLS, max_iterations=25)
 
