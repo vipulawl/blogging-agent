@@ -333,18 +333,70 @@ PROVIDER=openai      # or: ollama, anthropic
 
 ## Google APIs setup (optional)
 
-Without Google credentials, the pipeline uses DuckDuckGo only. With them, Research and Monitor use real GSC + GA4 data.
+Without Google credentials, the pipeline uses DuckDuckGo only. With them, Research and Monitor use real GSC + GA4 data (better topic discovery and performance tracking).
 
-**Create a service account:**
-1. [Google Cloud Console](https://console.cloud.google.com) → New project
-2. Enable: **Search Console API** and **Google Analytics Data API**
-3. IAM → Service Accounts → Create → Create JSON key → save as `google-credentials.json`
+### Step 1 — Create a Google Cloud project
 
-**Grant access:**
-- **GSC**: Search Console → Settings → Users → Add service account email as Viewer
-- **GA4**: Admin → Account Access Management → Add service account email as Viewer
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Click the project dropdown (top left) → **New Project** → give it any name → **Create**
+3. Make sure the new project is selected in the dropdown before continuing
 
-**For GitHub Actions:** paste the entire JSON as a single-line string in the `GOOGLE_CREDENTIALS_JSON` Actions variable.
+### Step 2 — Enable the required APIs
+
+1. In the left sidebar go to **APIs & Services → Library**
+2. Search for and enable **Google Search Console API** → click **Enable**
+3. Search for and enable **Google Analytics Data API** → click **Enable**
+
+### Step 3 — Create a service account and download the JSON key
+
+1. Go to **IAM & Admin → Service Accounts** → **+ Create Service Account**
+2. Give it a name (e.g. `blogging-agent`) → **Create and Continue** → **Done**
+3. Click on the service account you just created → **Keys** tab → **Add Key → Create new key → JSON → Create**
+4. A `.json` file downloads automatically — this is your `google-credentials.json`
+5. Copy it into the root of this repo:
+   ```bash
+   cp ~/Downloads/your-project-*.json google-credentials.json
+   ```
+6. **Note the service account email** — it looks like `blogging-agent@your-project.iam.gserviceaccount.com`. You'll need it in the next two steps.
+
+### Step 4 — Grant access in Google Search Console
+
+1. Go to [search.google.com/search-console](https://search.google.com/search-console)
+2. Select your property (top left)
+3. **Settings** (gear icon, bottom left) → **Users and permissions** → **Add user**
+4. Paste the service account email → set permission to **Full** or **Restricted** (Viewer is enough) → **Add**
+
+### Step 5 — Grant access in Google Analytics 4
+
+1. Go to [analytics.google.com](https://analytics.google.com) → select your account
+2. **Admin** (bottom left gear) → **Account Access Management** → **+** (top right)
+3. Paste the service account email → role **Viewer** → **Add**
+
+**Find your GA4 Property ID:**
+- **Admin** → under **Property**, click **Property details** → the **Property ID** is the number shown (e.g. `123456789`)
+
+### Step 6 — Configure your environment
+
+**Local (`.env`):**
+```env
+GOOGLE_CREDENTIALS_FILE=google-credentials.json
+GSC_SITE_URL=https://yoursite.com/          # trailing slash required
+GA4_PROPERTY_ID=123456789
+```
+
+**GitHub Actions:**
+
+Paste the entire JSON file as a single-line string in **Settings → Secrets and variables → Actions → Secrets** as `GOOGLE_CREDENTIALS_JSON`. To flatten it:
+```bash
+cat google-credentials.json | jq -c .
+```
+Copy the output (one line, no newlines) and paste it as the secret value.
+
+Then add these **Variables** (non-sensitive, Settings → Secrets and variables → Actions → Variables):
+| Variable | Example |
+|---|---|
+| `GSC_SITE_URL` | `https://yoursite.com/` |
+| `GA4_PROPERTY_ID` | `123456789` |
 
 ---
 
