@@ -29,11 +29,11 @@ console = Console()
 
 def _client():
     """Return the appropriate API client based on configured provider."""
-    if config.PROVIDER == "groq":
+    if config.PROVIDER == "openai":
         from openai import OpenAI
-        if not config.GROQ_API_KEY:
-            raise ValueError("GROQ_API_KEY not set in .env")
-        return OpenAI(api_key=config.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+        if not config.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY not set in .env")
+        return OpenAI(api_key=config.OPENAI_API_KEY)
     elif config.PROVIDER == "ollama":
         from openai import OpenAI
         return OpenAI(api_key="ollama", base_url=config.OLLAMA_BASE_URL)
@@ -60,8 +60,7 @@ def _strategy_client():
 def _research_client():
     """
     Client for the Research Agent. Uses OpenAI by default — reliable multi-tool
-    calls (web search, SERP, GSC, competitor analysis). Groq often emits malformed
-    tool calls on long agent loops. Falls back to the main provider if no key set.
+    calls (web search, SERP, GSC, competitor analysis). Falls back to the main provider if no key set.
     """
     if config.RESEARCH_PROVIDER == "openai" and config.OPENAI_API_KEY:
         from openai import OpenAI

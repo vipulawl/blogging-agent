@@ -47,7 +47,7 @@ class BaseAgent:
         with RunContext(agent_name, self._topic_id, self._topic_title) as ctx:
             self._run_ctx = ctx
             try:
-                if self.provider in ("groq", "ollama", "openai"):
+                if self.provider in ("openai", "ollama"):
                     result = self._run_openai(initial_message, system, tools, max_iterations)
                 else:
                     result = self._run_anthropic(initial_message, system, tools, max_iterations)

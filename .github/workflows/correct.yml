@@ -34,8 +34,8 @@ jobs:
 
       - name: Run corrector
         env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          PROVIDER: ${{ vars.PROVIDER || 'groq' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PROVIDER: ${{ vars.PROVIDER || 'openai' }}
           BLOG_NICHE: ${{ vars.BLOG_NICHE }}
           TARGET_AUDIENCE: ${{ vars.TARGET_AUDIENCE }}
           BLOG_TONE: ${{ vars.BLOG_TONE }}

@@ -45,11 +45,12 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-The minimum viable config (free tier, no Google APIs):
+The minimum viable config (no Google APIs):
 
 ```env
-PROVIDER=groq
-GROQ_API_KEY=your_key_here        # free at console.groq.com
+PROVIDER=openai
+OPENAI_API_KEY=your_key_here      # get at platform.openai.com
+OPENAI_MODEL=gpt-4o-mini
 BLOG_NICHE=SaaS marketing
 TARGET_AUDIENCE=early-stage startup founders
 BLOG_TONE=informative and practical
@@ -89,12 +90,12 @@ After setup, the entire pipeline runs itself. No local process needed.
 **Secrets** (sensitive):
 | Secret | Description |
 |---|---|
-| `GROQ_API_KEY` | Your Groq API key |
+| `OPENAI_API_KEY` | Your OpenAI API key |
 
 **Variables** (non-sensitive):
 | Variable | Example |
 |---|---|
-| `PROVIDER` | `groq` |
+| `PROVIDER` | `openai` |
 | `BLOG_NICHE` | `SaaS marketing` |
 | `TARGET_AUDIENCE` | `early-stage startup founders` |
 | `BLOG_TONE` | `informative and practical` |
@@ -319,13 +320,13 @@ Works with: **Next.js**, **Astro**, **Hugo**, **Jekyll**, **Gatsby**, **Nuxt Con
 
 | Provider | Model | Cost | Setup |
 |---|---|---|---|
-| **Groq** (default) | `llama-3.3-70b-versatile` | Free tier | `GROQ_API_KEY` from console.groq.com |
+| **OpenAI** (default) | `gpt-4o-mini` | ~$0.01–$0.05/article | `OPENAI_API_KEY` from platform.openai.com |
 | **Ollama** | Any local model | Free (local) | Install Ollama, pull a model |
 | **Anthropic** | `claude-sonnet-4-6` | ~$0.15–$0.40/article | `ANTHROPIC_API_KEY` |
 
 Switch provider in `.env`:
 ```env
-PROVIDER=groq        # or: ollama, anthropic
+PROVIDER=openai      # or: ollama, anthropic
 ```
 
 ---
@@ -353,9 +354,9 @@ Without Google credentials, the pipeline uses DuckDuckGo only. With them, Resear
 
 | Variable | Default | Description |
 |---|---|---|
-| `PROVIDER` | `groq` | AI provider: `groq`, `ollama`, `anthropic` |
-| `GROQ_API_KEY` | — | Required if `PROVIDER=groq` |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model |
+| `PROVIDER` | `openai` | AI provider: `openai`, `ollama`, `anthropic` |
+| `OPENAI_API_KEY` | — | Required if `PROVIDER=openai` |
+| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model (used for all agents) |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama endpoint |
 | `OLLAMA_MODEL` | `llama3.1:70b` | Ollama model |
 | `ANTHROPIC_API_KEY` | — | Required if `PROVIDER=anthropic` |

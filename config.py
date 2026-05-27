@@ -4,12 +4,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Provider ──────────────────────────────────────────────────────────────────
-# Options: "groq" | "ollama" | "anthropic"
-PROVIDER = os.getenv("PROVIDER", "groq")
-
-# Groq (free tier, OpenAI-compatible)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+# Options: "openai" | "ollama" | "anthropic"
+PROVIDER = os.getenv("PROVIDER", "openai")
 
 # Ollama (local, OpenAI-compatible)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -19,24 +15,22 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:70b")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
-# OpenAI — used for the Strategy Agent by default (better reasoning for competitor
-# analysis and content planning). Falls back to the main PROVIDER if key not set.
+# OpenAI — used for all agents. Strategy uses gpt-4o-mini; Research uses gpt-4o-mini.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # Which provider/model to use for the Strategy Agent specifically
 STRATEGY_PROVIDER = os.getenv("STRATEGY_PROVIDER", "openai")
 STRATEGY_MODEL = os.getenv("STRATEGY_MODEL", OPENAI_MODEL)
 
-# Research Agent — tool-heavy (web search, SERP, GSC, competitors). OpenAI is much
-# more reliable at structured tool calls than Groq. Default: gpt-4o-mini (best value).
+# Research Agent — tool-heavy (web search, SERP, GSC, competitors). Default: gpt-4o-mini.
 RESEARCH_PROVIDER = os.getenv("RESEARCH_PROVIDER", "openai")
 RESEARCH_MODEL = os.getenv("RESEARCH_MODEL", os.getenv("OPENAI_RESEARCH_MODEL", "gpt-4o-mini"))
 
 # Resolved model name based on provider
 def _resolve_model():
-    if PROVIDER == "groq":
-        return GROQ_MODEL
+    if PROVIDER == "openai":
+        return OPENAI_MODEL
     if PROVIDER == "ollama":
         return OLLAMA_MODEL
     return ANTHROPIC_MODEL

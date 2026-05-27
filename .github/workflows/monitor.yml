@@ -34,7 +34,7 @@ jobs:
 
       - name: Run monitor
         env:
-          PROVIDER: ${{ vars.PROVIDER || 'groq' }}
+          PROVIDER: ${{ vars.PROVIDER || 'openai' }}
           GOOGLE_CREDENTIALS_FILE: google-credentials.json
           GSC_SITE_URL: ${{ vars.GSC_SITE_URL }}
           GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
