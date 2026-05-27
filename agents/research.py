@@ -7,7 +7,19 @@ from tools.ga4 import get_top_pages, get_declining_pages
 from tools.serp import analyze_serp
 from tools.competitors import get_sitemap_posts, fetch_post_summary
 from tools.keyword_discovery import discover_keywords, get_google_trends
-from storage.db import save_topic, get_active_strategy, save_competitor_posts
+from storage.db import save_topic, get_active_strategy, save_competitor_posts, get_pillar_coverage
+
+CONTENT_ANGLES = [
+    "beginner-guide",
+    "how-to",
+    "comparison",
+    "case-study",
+    "deep-dive",
+    "listicle",
+    "tool-review",
+    "faq",
+    "opinion",
+]
 
 TOOLS = [
     {
@@ -123,10 +135,18 @@ TOOLS = [
                     "type": "string",
                     "description": "Brief for the writer: angle/hook, 4-6 subtopics, target reader pain point, competitor insight, suggested word count",
                 },
+                "pillar_name": {
+                    "type": "string",
+                    "description": "Exact name of the content pillar this topic belongs to (must match a pillar from the active strategy)",
+                },
+                "content_angle": {
+                    "type": "string",
+                    "description": f"Content angle for this post. Must be one of: {', '.join(CONTENT_ANGLES)}. Pick an angle NOT already covered for this pillar.",
+                },
                 "source": {"type": "string", "default": "web_search"},
                 "priority_score": {"type": "number", "default": 0.5},
             },
-            "required": ["title", "keyword", "research_brief"],
+            "required": ["title", "keyword", "research_brief", "pillar_name", "content_angle"],
         },
     },
 ]
@@ -138,6 +158,26 @@ Target audience: {audience}
 
 Active content strategy:
 {strategy_context}
+
+Pillar coverage (already written or in the pipeline — do NOT repeat these angles per pillar):
+{pillar_coverage_context}
+
+Content angle types (you MUST assign one per topic):
+- beginner-guide: intro/fundamentals for newcomers
+- how-to: step-by-step tutorial
+- comparison: X vs Y or best alternatives
+- case-study: real example or story
+- deep-dive: advanced/comprehensive analysis
+- listicle: list format (e.g. "10 ways to...")
+- tool-review: review of a specific tool or product
+- faq: question-answer format
+- opinion: thought leadership or contrarian take
+
+Angle diversity rules:
+- Assign each topic to a pillar_name (must match an existing strategy pillar exactly)
+- Choose a content_angle NOT already listed for that pillar in the coverage above
+- Spread topics across DIFFERENT pillars in this run — do not queue 3 topics for the same pillar
+- If all angles for a pillar are covered, pick the least-recently-used pillar with open angles
 
 Research process for this run:
 1. Check GSC (get_gsc_queries + get_gsc_rising) — find queries with impressions but low CTR or position 5-20
@@ -168,16 +208,19 @@ class ResearchAgent(BaseAgent):
     def run_research(self) -> None:
         strategy = get_active_strategy()
         strategy_context = _format_strategy(strategy)
+        pillar_coverage_context = _format_pillar_coverage(get_pillar_coverage(), strategy)
 
         system = SYSTEM.format(
             niche=config.BLOG_NICHE or "general topics",
             audience=config.TARGET_AUDIENCE,
             strategy_context=strategy_context,
+            pillar_coverage_context=pillar_coverage_context,
         )
         prompt = (
             f"Research and find 3-5 high-potential blog topics for a '{config.BLOG_NICHE or 'general'}' blog. "
             f"Check competitors for new posts, use keyword discovery for un-indexed topics, "
-            f"and validate competition level before saving each topic."
+            f"and validate competition level before saving each topic. "
+            f"Assign each topic to its pillar and pick an angle not yet covered for that pillar."
         )
         self.run(prompt, system, TOOLS, max_iterations=25)
 
@@ -222,9 +265,41 @@ class ResearchAgent(BaseAgent):
                 research_brief=inputs["research_brief"],
                 source=inputs.get("source", "web_search"),
                 priority_score=inputs.get("priority_score", 0.5),
+                pillar_name=inputs.get("pillar_name"),
+                content_angle=inputs.get("content_angle"),
             )
             return {"success": True, "topic_id": topic_id, "saved": inputs["title"]}
         return {"error": f"Unknown tool: {name}"}
+
+
+def _format_pillar_coverage(coverage: dict, strategy: dict | None) -> str:
+    """Format per-pillar angle coverage for injection into the system prompt."""
+    all_pillars = []
+    if strategy:
+        all_pillars = [p["name"] for p in strategy.get("content_pillars", [])]
+
+    if not all_pillars and not coverage:
+        return "No strategy pillars defined yet."
+
+    lines = []
+    seen = set()
+    for pillar in all_pillars:
+        seen.add(pillar)
+        covered = coverage.get(pillar, [])
+        remaining = [a for a in CONTENT_ANGLES if a not in covered]
+        if covered:
+            lines.append(f"  {pillar}:")
+            lines.append(f"    covered: {', '.join(covered)}")
+            lines.append(f"    open angles: {', '.join(remaining) if remaining else 'all covered — pick least-used angle'}")
+        else:
+            lines.append(f"  {pillar}: (no posts yet — all angles open)")
+
+    for pillar, covered in coverage.items():
+        if pillar not in seen:
+            remaining = [a for a in CONTENT_ANGLES if a not in covered]
+            lines.append(f"  {pillar}: covered: {', '.join(covered)} | open: {', '.join(remaining)}")
+
+    return "\n".join(lines) if lines else "No posts published or queued yet — all angles open for all pillars."
 
 
 def _format_strategy(strategy: dict | None) -> str:

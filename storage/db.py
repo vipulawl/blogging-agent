@@ -23,6 +23,8 @@ def init_db():
                 source TEXT DEFAULT 'web_search',
                 priority_score REAL DEFAULT 0.5,
                 status TEXT DEFAULT 'queued',
+                pillar_name TEXT,
+                content_angle TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -95,7 +97,9 @@ def init_db():
                 summary TEXT,
                 semantic_fingerprint TEXT,
                 published_at TEXT,
-                word_count INTEGER DEFAULT 0
+                word_count INTEGER DEFAULT 0,
+                pillar_name TEXT,
+                content_angle TEXT
             );
 
             CREATE TABLE IF NOT EXISTS performance_snapshots (
@@ -153,13 +157,26 @@ def init_db():
                 duration_ms INTEGER DEFAULT 0
             );
         """)
+        # Migrate existing DBs that pre-date these columns
+        for migration in [
+            "ALTER TABLE topics ADD COLUMN pillar_name TEXT",
+            "ALTER TABLE topics ADD COLUMN content_angle TEXT",
+            "ALTER TABLE post_memory ADD COLUMN pillar_name TEXT",
+            "ALTER TABLE post_memory ADD COLUMN content_angle TEXT",
+        ]:
+            try:
+                conn.execute(migration)
+            except Exception:
+                pass
 
 
-def save_topic(title: str, keyword: str, research_brief: str, source: str = "web_search", priority_score: float = 0.5) -> int:
+def save_topic(title: str, keyword: str, research_brief: str, source: str = "web_search",
+               priority_score: float = 0.5, pillar_name: str = None,
+               content_angle: str = None) -> int:
     with get_conn() as conn:
         cursor = conn.execute(
-            "INSERT INTO topics (title, keyword, research_brief, source, priority_score) VALUES (?, ?, ?, ?, ?)",
-            (title, keyword, research_brief, source, priority_score)
+            "INSERT INTO topics (title, keyword, research_brief, source, priority_score, pillar_name, content_angle) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (title, keyword, research_brief, source, priority_score, pillar_name, content_angle)
         )
         return cursor.lastrowid
 
@@ -255,7 +272,7 @@ def approve_draft(draft_id: int) -> dict:
     with get_conn() as conn:
         conn.execute("UPDATE drafts SET status = 'approved' WHERE id = ?", (draft_id,))
         row = conn.execute("""
-            SELECT d.*, t.keyword
+            SELECT d.*, t.keyword, t.pillar_name, t.content_angle
             FROM drafts d JOIN topics t ON d.topic_id = t.id
             WHERE d.id = ?
         """, (draft_id,)).fetchone()
@@ -416,16 +433,42 @@ def get_published_today_count() -> int:
 
 def save_post_memory(slug: str, title: str, keyword: str, tags: list,
                      summary: str, semantic_fingerprint: str,
-                     published_at: str = None, word_count: int = 0) -> int:
+                     published_at: str = None, word_count: int = 0,
+                     pillar_name: str = None, content_angle: str = None) -> int:
     with get_conn() as conn:
         cursor = conn.execute(
             """INSERT OR REPLACE INTO post_memory
-               (slug, title, keyword, tags, summary, semantic_fingerprint, published_at, word_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (slug, title, keyword, tags, summary, semantic_fingerprint, published_at, word_count, pillar_name, content_angle)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (slug, title, keyword, json.dumps(tags), summary, semantic_fingerprint,
-             published_at or datetime.now().isoformat()[:10], word_count),
+             published_at or datetime.now().isoformat()[:10], word_count, pillar_name, content_angle),
         )
         return cursor.lastrowid
+
+
+def get_pillar_coverage() -> dict:
+    """Returns {pillar_name: [content_angles covered]} across queued/in-pipeline topics and published posts."""
+    coverage: dict = {}
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT pillar_name, content_angle FROM topics WHERE pillar_name IS NOT NULL AND pillar_name != '' AND status NOT IN ('rejected')"
+        ).fetchall()
+        for r in rows:
+            pillar = r["pillar_name"]
+            angle = r["content_angle"] or ""
+            coverage.setdefault(pillar, [])
+            if angle and angle not in coverage[pillar]:
+                coverage[pillar].append(angle)
+        rows = conn.execute(
+            "SELECT pillar_name, content_angle FROM post_memory WHERE pillar_name IS NOT NULL AND pillar_name != ''"
+        ).fetchall()
+        for r in rows:
+            pillar = r["pillar_name"]
+            angle = r["content_angle"] or ""
+            coverage.setdefault(pillar, [])
+            if angle and angle not in coverage[pillar]:
+                coverage[pillar].append(angle)
+    return coverage
 
 
 def get_all_post_memory() -> list[dict]:

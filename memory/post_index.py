@@ -19,7 +19,8 @@ def _jaccard(a: set, b: set) -> float:
 
 class PostIndex:
     def add_post(self, slug: str, title: str, keyword: str, tags: list,
-                 content: str, published_at: str = None) -> None:
+                 content: str, published_at: str = None,
+                 pillar_name: str = None, content_angle: str = None) -> None:
         summary = content[:500]
         word_count = len(content.split())
         tokens = _tokenize(f"{title} {keyword} {' '.join(tags)} {content[:2000]}")
@@ -33,6 +34,8 @@ class PostIndex:
             semantic_fingerprint=fingerprint,
             published_at=published_at,
             word_count=word_count,
+            pillar_name=pillar_name,
+            content_angle=content_angle,
         )
 
     def find_similar(self, keyword: str = None, title: str = None, top_n: int = 5) -> list[dict]:

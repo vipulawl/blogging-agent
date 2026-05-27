@@ -125,6 +125,9 @@ def run_write(topic_id: int = None):
         console.print("[red]Editor did not save draft.[/red]")
         return
 
+    edited["pillar_name"] = topic.get("pillar_name")
+    edited["content_angle"] = topic.get("content_angle")
+
     if config.APPROVAL_MODE == "pr":
         pr_url = _create_pr(edited)
         if pr_url:
@@ -173,6 +176,8 @@ def run_review():
                 keyword=approved.get("keyword", ""),
                 tags=approved.get("tags", []),
                 content=approved.get("content", ""),
+                pillar_name=approved.get("pillar_name"),
+                content_angle=approved.get("content_angle"),
             )
             console.print(f"[green]Approved →[/green] {path}\n")
         elif choice == "r":
@@ -509,6 +514,8 @@ def _create_pr(draft: dict) -> str | None:
         tags=draft.get("tags", []),
         content=draft.get("content", ""),
         published_at=date_str,
+        pillar_name=draft.get("pillar_name"),
+        content_angle=draft.get("content_angle"),
     )
     return _open_pr(
         repo_dir=repo_dir,
