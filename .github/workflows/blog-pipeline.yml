@@ -60,6 +60,7 @@ jobs:
           STRATEGY_PROVIDER:  openai
           RESEARCH_PROVIDER:  openai
           RESEARCH_MODEL:     ${{ vars.RESEARCH_MODEL || 'gpt-4o-mini' }}
+          PRODUCT_URL:        ${{ vars.PRODUCT_URL }}
           BLOG_NICHE:         ${{ secrets.BLOG_NICHE }}
           TARGET_AUDIENCE:    ${{ secrets.TARGET_AUDIENCE }}
           BLOG_TONE:          ${{ secrets.BLOG_TONE }}
