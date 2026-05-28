@@ -6,7 +6,10 @@ from tools.ga4 import get_top_pages, get_declining_pages
 from tools.serp import analyze_serp
 from tools.competitors import get_sitemap_posts, fetch_post_summary
 from tools.keyword_discovery import discover_keywords, get_google_trends
-from storage.db import save_topic, get_active_strategy, save_competitor_posts, get_pillar_coverage
+from storage.db import (
+    save_topic, get_active_strategy, save_competitor_posts, get_pillar_coverage,
+    record_sitemap_check, get_unreachable_competitors,
+)
 
 CONTENT_ANGLES = [
     "beginner-guide",
@@ -191,6 +194,9 @@ Angle diversity rules:
 - Spread topics across DIFFERENT pillars in this run — do not queue 3 topics for the same pillar
 - If all angles for a pillar are covered, pick the least-recently-used pillar with open angles
 
+── COMPETITOR SITEMAP FAILURES (skip these — do NOT call check_competitor_new_posts for them) ──
+{unreachable_context}
+
 Research process for this run:
 1. Check GSC (get_gsc_queries + get_gsc_rising) — find queries with impressions but low CTR or position 5-20
 2. Check GA4 (get_ga4_top_pages + get_ga4_declining) — understand what's working and what needs a refresh
@@ -262,6 +268,7 @@ class ResearchAgent(BaseAgent):
             f"Product URL: {config.PRODUCT_URL}" if config.PRODUCT_URL else
             "No product summary available — search broadly within the niche."
         )
+        unreachable_context = _format_unreachable_competitors()
 
         system = SYSTEM.format(
             min_topics=config.MIN_TOPICS_PER_RESEARCH,
@@ -270,6 +277,7 @@ class ResearchAgent(BaseAgent):
             product_summary=product_summary,
             strategy_context=strategy_context,
             pillar_coverage_context=pillar_coverage_context,
+            unreachable_context=unreachable_context,
         )
         prompt = (
             f"Research and find 3-5 high-potential blog topics for a '{config.BLOG_NICHE or 'general'}' blog. "
@@ -322,11 +330,21 @@ class ResearchAgent(BaseAgent):
             return get_declining_pages(inputs.get("days", 28))
         elif name == "check_competitor_new_posts":
             site_url = inputs["site_url"]
+            unreachable = {r["competitor_url"] for r in get_unreachable_competitors()}
+            if site_url in unreachable:
+                return {
+                    "skipped": True,
+                    "reason": "Sitemap has failed 3+ consecutive times — skipping to save tool budget",
+                }
             posts = get_sitemap_posts(site_url, inputs.get("days_recent", 14))
-            if posts and "error" not in posts[0]:
-                new = save_competitor_posts(site_url, posts)
-                return {"new_posts": new, "total_recent": len(posts), "new_count": len(new)}
-            return posts
+            if posts and "error" in posts[0]:
+                record_sitemap_check(site_url, "error", posts[0]["error"])
+                return posts
+            record_sitemap_check(site_url, "ok")
+            if not posts:
+                return {"new_posts": [], "total_recent": 0, "new_count": 0}
+            new = save_competitor_posts(site_url, posts)
+            return {"new_posts": new, "total_recent": len(posts), "new_count": len(new)}
         elif name == "analyze_post":
             return fetch_post_summary(inputs["url"])
         elif name == "analyze_serp":
@@ -357,6 +375,17 @@ class ResearchAgent(BaseAgent):
             self._topics_saved += 1
             return {"success": True, "topic_id": topic_id, "saved": inputs["title"]}
         return {"error": f"Unknown tool: {name}"}
+
+
+def _format_unreachable_competitors() -> str:
+    rows = get_unreachable_competitors()
+    if not rows:
+        return "None — all competitor sitemaps are accessible."
+    lines = []
+    for r in rows:
+        err = f" ({r['last_error']})" if r.get("last_error") else ""
+        lines.append(f"  - {r['competitor_url']}{err}  [{r['consecutive_failures']} consecutive failures]")
+    return "\n".join(lines)
 
 
 def _format_pillar_names(strategy) -> str:

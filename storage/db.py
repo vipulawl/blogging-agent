@@ -65,6 +65,17 @@ def init_db():
                 discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS competitor_sitemap_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                competitor_url TEXT UNIQUE NOT NULL,
+                last_checked TEXT,
+                last_status TEXT DEFAULT 'unknown',
+                last_error TEXT,
+                consecutive_failures INTEGER DEFAULT 0,
+                total_checks INTEGER DEFAULT 0,
+                last_ok TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS refreshes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT NOT NULL,
@@ -184,6 +195,16 @@ def init_db():
             "ALTER TABLE post_memory ADD COLUMN content_angle TEXT",
             "ALTER TABLE agent_tool_calls ADD COLUMN iteration_num INTEGER DEFAULT 0",
             "ALTER TABLE strategy ADD COLUMN product_summary TEXT",
+            """CREATE TABLE IF NOT EXISTS competitor_sitemap_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                competitor_url TEXT UNIQUE NOT NULL,
+                last_checked TEXT,
+                last_status TEXT DEFAULT 'unknown',
+                last_error TEXT,
+                consecutive_failures INTEGER DEFAULT 0,
+                total_checks INTEGER DEFAULT 0,
+                last_ok TEXT
+            )""",
         ]:
             try:
                 conn.execute(migration)
@@ -372,6 +393,62 @@ def save_competitor_posts(competitor_url: str, posts: list[dict]) -> list[dict]:
             except Exception:
                 pass
     return new_posts
+
+
+# ── Competitor sitemap health ─────────────────────────────────────────────────
+
+def record_sitemap_check(competitor_url: str, status: str, error_msg: str = None) -> None:
+    """Record the outcome of a check_competitor_new_posts call.
+
+    status: 'ok' (sitemap reachable, even if no recent posts) | 'error' (no sitemap / parse fail)
+    Consecutive failures reset to 0 on 'ok'. After 3+ failures the URL is auto-skipped.
+    """
+    now = datetime.now().isoformat()[:10]
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT consecutive_failures, total_checks FROM competitor_sitemap_status WHERE competitor_url = ?",
+            (competitor_url,),
+        ).fetchone()
+
+        if existing:
+            new_failures = 0 if status == "ok" else existing["consecutive_failures"] + 1
+            new_total = existing["total_checks"] + 1
+            conn.execute(
+                """UPDATE competitor_sitemap_status
+                   SET last_checked=?, last_status=?, last_error=?,
+                       consecutive_failures=?, total_checks=?,
+                       last_ok=CASE WHEN ? = 'ok' THEN ? ELSE last_ok END
+                   WHERE competitor_url=?""",
+                (now, status, error_msg, new_failures, new_total, status, now, competitor_url),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO competitor_sitemap_status
+                   (competitor_url, last_checked, last_status, last_error,
+                    consecutive_failures, total_checks, last_ok)
+                   VALUES (?, ?, ?, ?, ?, 1, ?)""",
+                (competitor_url, now, status, error_msg,
+                 0 if status == "ok" else 1,
+                 now if status == "ok" else None),
+            )
+
+
+def get_unreachable_competitors(min_failures: int = 3, retry_after_days: int = 30) -> list[dict]:
+    """Return competitors whose sitemaps have failed min_failures times in a row recently.
+
+    URLs whose last_checked is older than retry_after_days are excluded so they get
+    retried automatically after a month (the site may have fixed its sitemap).
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT competitor_url, consecutive_failures, last_error, last_checked, last_ok
+               FROM competitor_sitemap_status
+               WHERE consecutive_failures >= ?
+                 AND last_checked >= date('now', ?)
+               ORDER BY consecutive_failures DESC""",
+            (min_failures, f"-{retry_after_days} days"),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ── Refresh tracking ──────────────────────────────────────────────────────────
