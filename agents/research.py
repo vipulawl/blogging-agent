@@ -1,4 +1,3 @@
-import json
 import config
 from .base import BaseAgent
 from tools.search import web_search
@@ -151,7 +150,13 @@ TOOLS = [
     },
 ]
 
+SAVE_TOPIC_TOOL = TOOLS[-1]
+SAVE_ONLY_TOOLS = [SAVE_TOPIC_TOOL]
+
 SYSTEM = """You are an expert SEO research agent. Your job is to find 3-5 high-potential blog topics for this run.
+
+MANDATORY COMPLETION RULE: You MUST call save_topic at least {min_topics} times before finishing. A text-only response without save_topic calls = failed run. Do NOT summarize findings — call save_topic.
+TOOL BUDGET: max 3 check_competitor_new_posts, 2 discover_keywords, 3 analyze_serp, 1 get_google_trends — then STOP researching and call save_topic.
 
 Blog niche: {niche}
 Target audience: {audience}
@@ -194,7 +199,7 @@ Research process for this run:
 5. For keywords NOT in GSC (i.e. topics you're not indexed for), use discover_keywords on pillar seed keywords
 6. Use get_google_trends on 1-2 pillar topics to catch rising queries
 7. Use analyze_serp to check competition level before committing to a topic
-8. Save 3-5 topics with detailed research briefs
+8. Save 3-5 topics with detailed research briefs — DO NOT finish without calling save_topic
 
 Topic selection priority:
 - Competitor just posted on a pillar topic → counter with a better/different angle
@@ -210,18 +215,56 @@ For each research_brief include:
 - Competitive insight (who ranks, their weakness)
 - Suggested word count (800-2500)"""
 
+SAVE_ONLY_SYSTEM = """You are an SEO content strategist. Research tools are DISABLED — you have only save_topic available.
+
+TASK: Call save_topic exactly {needed} more times. Use the strategy context below to generate distinct, high-quality blog topics. Do NOT write a summary — call save_topic immediately.
+
+Blog niche: {niche}
+Target audience: {audience}
+
+── YOUR PRODUCT ────────────────────────────────────────────────────────────────
+{product_summary}
+
+── STRATEGY CONTEXT ────────────────────────────────────────────────────────────
+{strategy_context}
+
+── CONTENT GAPS TO FILL ────────────────────────────────────────────────────────
+{gaps_and_wins}
+
+── PILLAR NAMES (use exact spelling) ───────────────────────────────────────────
+{pillar_names}
+
+── PILLAR COVERAGE (avoid duplicating covered angles) ──────────────────────────
+{pillar_coverage_context}
+
+Rules:
+- Each topic must use a different keyword and belong to a different pillar where possible
+- Pick content_angle values NOT already covered for that pillar (see coverage above)
+- Include a detailed research_brief: angle/hook, 4-6 subtopics, reader pain point, suggested word count
+- Each topic must connect to the product's use cases
+- If a save_topic call is rejected as duplicate, immediately try a different keyword/angle
+
+Valid content_angle values: {angles}"""
+
 
 class ResearchAgent(BaseAgent):
-    def run_research(self) -> None:
+    def __init__(self, client, model=None, provider=None):
+        super().__init__(client, model, provider)
+        self._topics_saved = 0
+        self._topics_skipped = 0
+
+    def run_research(self) -> int:
         strategy = get_active_strategy()
         strategy_context = _format_strategy(strategy)
-        pillar_coverage_context = _format_pillar_coverage(get_pillar_coverage(), strategy)
+        pillar_coverage = get_pillar_coverage()
+        pillar_coverage_context = _format_pillar_coverage(pillar_coverage, strategy)
         product_summary = (strategy or {}).get("product_summary", "") or (
             f"Product URL: {config.PRODUCT_URL}" if config.PRODUCT_URL else
             "No product summary available — search broadly within the niche."
         )
 
         system = SYSTEM.format(
+            min_topics=config.MIN_TOPICS_PER_RESEARCH,
             niche=config.BLOG_NICHE or "general topics",
             audience=config.TARGET_AUDIENCE,
             product_summary=product_summary,
@@ -234,9 +277,37 @@ class ResearchAgent(BaseAgent):
             f"Check competitors for new posts, use keyword discovery for un-indexed topics, "
             f"and validate competition level before saving each topic. "
             f"Assign each topic to its pillar and pick an angle not yet covered for that pillar. "
-            f"Include in each research_brief how the topic connects to the product's features or use cases."
+            f"Include in each research_brief how the topic connects to the product's features or use cases. "
+            f"You MUST call save_topic at least {config.MIN_TOPICS_PER_RESEARCH} times — do not finish without saving topics."
         )
-        self.run(prompt, system, TOOLS, max_iterations=25)
+        self.run(prompt, system, TOOLS, max_iterations=15)
+
+        if self._topics_saved < config.MIN_TOPICS_PER_RESEARCH:
+            self._run_save_only_pass(strategy, strategy_context, pillar_coverage_context, product_summary)
+
+        return self._topics_saved
+
+    def _run_save_only_pass(self, strategy, strategy_context, pillar_coverage_context, product_summary):
+        needed = config.MIN_TOPICS_PER_RESEARCH - self._topics_saved
+        gaps_and_wins = _format_gaps_and_wins(strategy)
+
+        save_only_system = SAVE_ONLY_SYSTEM.format(
+            needed=needed,
+            niche=config.BLOG_NICHE or "general topics",
+            audience=config.TARGET_AUDIENCE,
+            product_summary=product_summary,
+            strategy_context=strategy_context,
+            gaps_and_wins=gaps_and_wins,
+            pillar_names=_format_pillar_names(strategy),
+            pillar_coverage_context=pillar_coverage_context,
+            angles=", ".join(CONTENT_ANGLES),
+        )
+        prompt = (
+            f"You must call save_topic {needed} more time(s) right now. "
+            f"Use the strategy pillars, content gaps, and quick wins in your system prompt. "
+            f"Each topic needs a unique keyword and pillar assignment. Call save_topic now — do not write a summary."
+        )
+        self.run(prompt, save_only_system, SAVE_ONLY_TOOLS, max_iterations=10)
 
     def _execute_tool(self, name: str, inputs: dict):
         if name == "web_search":
@@ -268,6 +339,7 @@ class ResearchAgent(BaseAgent):
             from dedup import DedupChecker
             is_dup, reason, match = DedupChecker().check(inputs["title"], inputs["keyword"])
             if is_dup:
+                self._topics_skipped += 1
                 return {
                     "skipped": True,
                     "reason": f"Duplicate detected: {reason}",
@@ -282,8 +354,31 @@ class ResearchAgent(BaseAgent):
                 pillar_name=inputs.get("pillar_name"),
                 content_angle=inputs.get("content_angle"),
             )
+            self._topics_saved += 1
             return {"success": True, "topic_id": topic_id, "saved": inputs["title"]}
         return {"error": f"Unknown tool: {name}"}
+
+
+def _format_pillar_names(strategy) -> str:
+    if not strategy:
+        return "(no strategy defined)"
+    pillars = strategy.get("content_pillars", [])
+    if not pillars:
+        return "(no pillars defined)"
+    return "\n".join(f"  - {p['name']}" for p in pillars)
+
+
+def _format_gaps_and_wins(strategy) -> str:
+    if not strategy:
+        return "(no strategy defined)"
+    lines = []
+    gaps = strategy.get("content_gaps", [])
+    wins = strategy.get("quick_wins", [])
+    if gaps:
+        lines.append(f"Content gaps: {', '.join(gaps[:8])}")
+    if wins:
+        lines.append(f"Quick win keywords: {', '.join(wins[:8])}")
+    return "\n".join(lines) or "(none listed)"
 
 
 def _format_pillar_coverage(coverage: dict, strategy: dict | None) -> str:

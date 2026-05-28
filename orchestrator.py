@@ -1,6 +1,7 @@
 import json
 import subprocess
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -69,14 +70,28 @@ def _research_client():
     return _client()
 
 
-def run_research():
+def run_research() -> int:
+    from storage.db import get_all_topics
     console.print("\n[bold blue]Research Agent[/bold blue] — finding topics...")
-    ResearchAgent(
+    queued_before = len(get_all_topics(status="queued"))
+    agent = ResearchAgent(
         _research_client(),
         model=config.RESEARCH_MODEL,
         provider=config.RESEARCH_PROVIDER if config.OPENAI_API_KEY else config.PROVIDER,
-    ).run_research()
-    console.print("[green]Done. Topics saved to queue.[/green]")
+    )
+    saved_calls = agent.run_research()
+    queued_after = len(get_all_topics(status="queued"))
+    net_new = queued_after - queued_before
+    if net_new < 1 or saved_calls < config.MIN_TOPICS_PER_RESEARCH:
+        console.print(
+            f"[red]Research failed — {saved_calls} topic(s) saved "
+            f"(need {config.MIN_TOPICS_PER_RESEARCH}), {net_new} net new in queue.[/red]"
+        )
+        if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+            sys.exit(1)
+        return 0
+    console.print(f"[green]Done. {net_new} new topic(s) added to queue.[/green]")
+    return net_new
 
 
 def run_write(topic_id: int = None):
@@ -190,7 +205,8 @@ def run_pipeline():
     from storage.db import get_all_topics
     queued = get_all_topics(status="queued")
     if not queued:
-        run_research()
+        if run_research() == 0:
+            return
     run_write()
     run_review()
 

@@ -153,6 +153,10 @@ def _research_summary(tool_calls: list) -> str:
                     saved.append(f"{title}{tag}")
             except Exception:
                 pass
+    save_topic_calls = sum(1 for tc in tool_calls if tc["tool_name"] == "save_topic")
+    if save_topic_calls == 0:
+        return f"WARNING: 0 topics saved ({len(tool_calls)} steps — save_topic never called)"
+
     parts = []
     if saved:
         parts.append(f"Saved {len(saved)} topic(s): {'; '.join(saved)}")

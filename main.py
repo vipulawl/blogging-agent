@@ -11,7 +11,8 @@ console = Console()
 
 def cmd_research(_args):
     from orchestrator import run_research
-    run_research()
+    if run_research() == 0:
+        sys.exit(1)
 
 
 def cmd_write(args):

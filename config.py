@@ -71,6 +71,8 @@ REPO_DIR = os.getenv("REPO_DIR", "")
 POLL_INTERVAL_MINUTES = int(os.getenv("POLL_INTERVAL_MINUTES", "60"))
 # Trigger research when queued topics drop below this number
 MIN_QUEUE_SIZE = int(os.getenv("MIN_QUEUE_SIZE", "3"))
+# Minimum save_topic calls required for a research run to be considered successful
+MIN_TOPICS_PER_RESEARCH = int(os.getenv("MIN_TOPICS_PER_RESEARCH", "3"))
 # Max articles written per calendar day
 MAX_ARTICLES_PER_DAY = int(os.getenv("MAX_ARTICLES_PER_DAY", "1"))
 

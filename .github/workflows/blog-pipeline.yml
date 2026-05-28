@@ -72,8 +72,9 @@ jobs:
           GSC_SITE_URL:       ${{ secrets.GSC_SITE_URL }}
           GA4_PROPERTY_ID:    ${{ secrets.GA4_PROPERTY_ID }}
           GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' && 'google-credentials.json' || '' }}
-          MAX_ARTICLES_PER_DAY: ${{ vars.MAX_ARTICLES_PER_DAY || '1' }}
-          MIN_QUEUE_SIZE:       ${{ vars.MIN_QUEUE_SIZE || '3' }}
+          MAX_ARTICLES_PER_DAY:       ${{ vars.MAX_ARTICLES_PER_DAY || '1' }}
+          MIN_QUEUE_SIZE:             ${{ vars.MIN_QUEUE_SIZE || '3' }}
+          MIN_TOPICS_PER_RESEARCH:    ${{ vars.MIN_TOPICS_PER_RESEARCH || '3' }}
         run: python main.py ${{ github.event.inputs.action || 'pipeline' }}
 
       - name: Persist state (commit DB back to repo)
