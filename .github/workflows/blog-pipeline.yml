@@ -27,10 +27,33 @@ jobs:
       run:
         working-directory: blogging-agent
 
+    # Shared env — available to every step so we don't repeat it
+    env:
+      PROVIDER:           openai
+      OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_MODEL:       ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+      STRATEGY_PROVIDER:  openai
+      RESEARCH_PROVIDER:  openai
+      RESEARCH_MODEL:     ${{ vars.RESEARCH_MODEL || 'gpt-4o-mini' }}
+      PRODUCT_URL:        ${{ vars.PRODUCT_URL }}
+      BLOG_NICHE:         ${{ secrets.BLOG_NICHE }}
+      TARGET_AUDIENCE:    ${{ secrets.TARGET_AUDIENCE }}
+      BLOG_TONE:          ${{ secrets.BLOG_TONE }}
+      BLOG_LANGUAGE:      ${{ secrets.BLOG_LANGUAGE || 'English' }}
+      APPROVAL_MODE:      pr
+      CONTENT_DIR:        ${{ vars.CONTENT_DIR }}
+      REPO_DIR:           ${{ github.workspace }}
+      GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
+      GSC_SITE_URL:       ${{ secrets.GSC_SITE_URL }}
+      GA4_PROPERTY_ID:    ${{ secrets.GA4_PROPERTY_ID }}
+      GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' && 'google-credentials.json' || '' }}
+      MAX_ARTICLES_PER_DAY:       ${{ vars.MAX_ARTICLES_PER_DAY || '1' }}
+      MIN_QUEUE_SIZE:             ${{ vars.MIN_QUEUE_SIZE || '3' }}
+      MIN_TOPICS_PER_RESEARCH:    ${{ vars.MIN_TOPICS_PER_RESEARCH || '3' }}
+
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history so _create_pr() can branch from main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -52,35 +75,39 @@ jobs:
         if: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' }}
         run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
 
-      - name: Run
-        env:
-          PROVIDER:           openai
-          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL:       ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
-          STRATEGY_PROVIDER:  openai
-          RESEARCH_PROVIDER:  openai
-          RESEARCH_MODEL:     ${{ vars.RESEARCH_MODEL || 'gpt-4o-mini' }}
-          PRODUCT_URL:        ${{ vars.PRODUCT_URL }}
-          BLOG_NICHE:         ${{ secrets.BLOG_NICHE }}
-          TARGET_AUDIENCE:    ${{ secrets.TARGET_AUDIENCE }}
-          BLOG_TONE:          ${{ secrets.BLOG_TONE }}
-          BLOG_LANGUAGE:      ${{ secrets.BLOG_LANGUAGE || 'English' }}
-          APPROVAL_MODE:      pr
-          CONTENT_DIR:        ${{ vars.CONTENT_DIR }}      # set in repo Variables, e.g. posts/
-          REPO_DIR:           ${{ github.workspace }}
-          GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
-          GSC_SITE_URL:       ${{ secrets.GSC_SITE_URL }}
-          GA4_PROPERTY_ID:    ${{ secrets.GA4_PROPERTY_ID }}
-          GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' && 'google-credentials.json' || '' }}
-          MAX_ARTICLES_PER_DAY:       ${{ vars.MAX_ARTICLES_PER_DAY || '1' }}
-          MIN_QUEUE_SIZE:             ${{ vars.MIN_QUEUE_SIZE || '3' }}
-          MIN_TOPICS_PER_RESEARCH:    ${{ vars.MIN_TOPICS_PER_RESEARCH || '3' }}
-        run: python main.py ${{ github.event.inputs.action || 'pipeline' }}
+      # ── Pipeline: split into checkpointed steps so dashboard sees mid-run state ──
 
-      - name: Persist state (commit DB back to repo)
+      - name: Research
+        if: ${{ !github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'research' }}
+        run: python main.py research
+
+      - name: 📡 DB checkpoint
+        if: ${{ always() && (!github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'research') }}
+        run: |
+          cd ${{ github.workspace }}
+          git add -f blogging-agent/blogging_agent.db 2>/dev/null || true
+          git diff --staged --quiet \
+            || git commit -m "chore: db checkpoint after research [skip ci]" && git push || true
+
+      - name: Write
+        if: ${{ !github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'write' }}
+        run: python main.py write
+
+      - name: 📡 DB checkpoint
+        if: ${{ always() && (!github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'write') }}
+        run: |
+          cd ${{ github.workspace }}
+          git add -f blogging-agent/blogging_agent.db 2>/dev/null || true
+          git diff --staged --quiet \
+            || git commit -m "chore: db checkpoint after write [skip ci]" && git push || true
+
+      - name: Refresh
+        if: ${{ github.event.inputs.action == 'refresh' }}
+        run: python main.py refresh
+
+      - name: Persist state (final commit)
         if: always()
         run: |
-          # Move to repo root so the path is correct
           cd ${{ github.workspace }}
           git add -f blogging-agent/blogging_agent.db 2>/dev/null || true
           git diff --staged --quiet \
