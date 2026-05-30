@@ -5,6 +5,9 @@ on:
     - cron: "0 */6 * * *"   # every 6 hours
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: blog-scheduler
   cancel-in-progress: false
@@ -12,9 +15,6 @@ concurrency:
 jobs:
   schedule:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: blogging-agent
 
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -73,3 +75,4 @@ jobs:
           git add -f blogging_agent.db 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: persist scheduler state [skip ci]"
           git push
+

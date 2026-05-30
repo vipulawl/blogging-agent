@@ -43,9 +43,6 @@ concurrency:
 jobs:
   build-strategy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: blogging-agent
 
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +51,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: blogging-agent/requirements.txt
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -82,9 +79,9 @@ jobs:
 
       - name: Persist strategy
         run: |
-          cd ${{ github.workspace }}
           git config user.name  "Blogging Agent"
           git config user.email "bot@noreply.github.com"
-          git add -f blogging-agent/blogging_agent.db
+          git add -f blogging_agent.db 2>/dev/null || true
           git diff --staged --quiet \
-            || git commit -m "chore: update blog strategy [skip ci]" && git push
+            || git commit -m "chore: update blog strategy [skip ci]" && git push || true
+
