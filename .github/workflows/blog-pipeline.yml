@@ -15,7 +15,6 @@ permissions:
   contents: write
   pull-requests: write
 
-# Never run two pipeline jobs at the same time (would corrupt the DB)
 concurrency:
   group: blog-pipeline
   cancel-in-progress: false
@@ -23,11 +22,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: blogging-agent
 
-    # Shared env — available to every step so we don't repeat it
     env:
       PROVIDER:           openai
       OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
@@ -61,7 +56,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: blogging-agent/requirements.txt
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -75,7 +70,7 @@ jobs:
         if: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' }}
         run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
 
-      # ── Pipeline: split into checkpointed steps so dashboard sees mid-run state ──
+      # ── Pipeline: checkpointed steps so dashboard sees mid-run state ──
 
       - name: Research
         if: ${{ !github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'research' }}
@@ -84,8 +79,7 @@ jobs:
       - name: 📡 DB checkpoint
         if: ${{ always() && (!github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'research') }}
         run: |
-          cd ${{ github.workspace }}
-          git add -f blogging-agent/blogging_agent.db 2>/dev/null || true
+          git add -f blogging_agent.db 2>/dev/null || true
           git diff --staged --quiet \
             || git commit -m "chore: db checkpoint after research [skip ci]" && git push || true
 
@@ -96,8 +90,7 @@ jobs:
       - name: 📡 DB checkpoint
         if: ${{ always() && (!github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'write') }}
         run: |
-          cd ${{ github.workspace }}
-          git add -f blogging-agent/blogging_agent.db 2>/dev/null || true
+          git add -f blogging_agent.db 2>/dev/null || true
           git diff --staged --quiet \
             || git commit -m "chore: db checkpoint after write [skip ci]" && git push || true
 
@@ -105,10 +98,9 @@ jobs:
         if: ${{ github.event.inputs.action == 'refresh' }}
         run: python main.py refresh
 
-      - name: Persist state (final commit)
+      - name: Persist state
         if: always()
         run: |
-          cd ${{ github.workspace }}
-          git add -f blogging-agent/blogging_agent.db 2>/dev/null || true
+          git add -f blogging_agent.db 2>/dev/null || true
           git diff --staged --quiet \
             || git commit -m "chore: blog agent state [skip ci]" && git push || true
