@@ -57,7 +57,7 @@ jobs:
         with:
           workflow: blog-pipeline.yml
           inputs: '{"action":"write","topic_id":"${{ steps.scheduler.outputs.topic_id }}"}'
-          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trigger research
         if: steps.scheduler.outputs.action == 'research'
@@ -65,7 +65,7 @@ jobs:
         with:
           workflow: blog-pipeline.yml
           inputs: '{"action":"research"}'
-          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Persist DB
         if: always()
