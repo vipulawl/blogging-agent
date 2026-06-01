@@ -223,6 +223,47 @@ def save_topic(title: str, keyword: str, research_brief: str, source: str = "web
         return cursor.lastrowid
 
 
+def recover_stuck_writing_topics() -> int:
+    """Reset 'writing' topics that have no saved draft back to 'queued'. Returns count recovered."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM topics WHERE status = 'writing'"
+        ).fetchall()
+        recovered = 0
+        for row in rows:
+            draft = conn.execute(
+                "SELECT id FROM drafts WHERE topic_id = ? LIMIT 1", (row["id"],)
+            ).fetchone()
+            if not draft:
+                conn.execute("UPDATE topics SET status = 'queued' WHERE id = ?", (row["id"],))
+                recovered += 1
+        return recovered
+
+
+def claim_topic(topic_id: int = None) -> dict | None:
+    """Atomically claim a topic (queued → writing). Runs recover_stuck_writing_topics first."""
+    recover_stuck_writing_topics()
+    with get_conn() as conn:
+        if topic_id:
+            row = conn.execute(
+                "SELECT * FROM topics WHERE id = ? AND status = 'queued'", (topic_id,)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM topics WHERE status = 'queued' ORDER BY priority_score DESC, created_at ASC LIMIT 1"
+            ).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE topics SET status = 'writing' WHERE id = ?", (row["id"],))
+        return dict(row)
+
+
+def reject_topic(topic_id: int) -> None:
+    """Mark a topic as rejected without touching any draft."""
+    with get_conn() as conn:
+        conn.execute("UPDATE topics SET status = 'rejected' WHERE id = ?", (topic_id,))
+
+
 def get_next_topic() -> dict | None:
     with get_conn() as conn:
         row = conn.execute(

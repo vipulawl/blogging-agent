@@ -124,10 +124,12 @@ def cmd_dedup(args):
     from dedup import DedupChecker
     keyword = getattr(args, "keyword", "") or ""
     title = getattr(args, "title", "") or keyword
+    pillar = getattr(args, "pillar", "") or None
+    angle = getattr(args, "angle", "") or None
     if not keyword and not title:
         console.print("[yellow]Provide --keyword or --title[/yellow]")
         return
-    is_dup, reason, match = DedupChecker().check(title, keyword)
+    is_dup, reason, match = DedupChecker().check(title, keyword, pillar_name=pillar, content_angle=angle)
     status = "[red]DUPLICATE[/red]" if is_dup else "[green]UNIQUE[/green]"
     console.print(f"\nResult: {status}")
     console.print(f"Reason: {reason}")
@@ -206,6 +208,8 @@ commands:
     dedup_p = subparsers.add_parser("dedup", help="Check a keyword/title for duplicates")
     dedup_p.add_argument("--keyword", type=str, default="", help="Keyword to check")
     dedup_p.add_argument("--title", type=str, default="", help="Title to check")
+    dedup_p.add_argument("--pillar", type=str, default="", help="Content pillar name to include in check")
+    dedup_p.add_argument("--angle", type=str, default="", help="Content angle to include in check")
 
     logs_p = subparsers.add_parser("logs", help="View agent run logs and performance dashboard")
     logs_p.add_argument("--run", type=str, default=None, metavar="ID", help="Show full trace for a specific run ID")

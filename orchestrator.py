@@ -17,7 +17,7 @@ from agents.editor import EditorAgent
 from agents.strategy import StrategyAgent
 from agents.refresh import RefreshAgent
 from storage.db import (
-    get_next_topic, get_topic_by_id, get_pending_drafts,
+    claim_topic, reject_topic, get_pending_drafts,
     get_latest_draft_for_topic, approve_draft, reject_draft,
     get_active_strategy, save_strategy,
     get_pending_refreshes, mark_refresh_done, was_recently_refreshed,
@@ -95,23 +95,29 @@ def run_research() -> int:
 
 
 def run_write(topic_id: int = None):
-    topic = get_topic_by_id(topic_id) if topic_id else get_next_topic()
+    topic = claim_topic(topic_id)
     if not topic:
-        console.print("[yellow]No queued topics. Run: python main.py research[/yellow]")
+        if topic_id:
+            console.print(f"[yellow]Topic {topic_id} not found or not queued.[/yellow]")
+        else:
+            console.print("[yellow]No queued topics. Run: python main.py research[/yellow]")
         return
 
     console.print(f"\n[bold]Topic:[/bold] {topic['title']}")
     console.print(f"[dim]Keyword: {topic['keyword']} | Source: {topic['source']}[/dim]\n")
 
-    # Dedup check — warn but don't block (user chose this topic)
-    is_dup, dup_reason, _ = DedupChecker().check(topic["title"], topic["keyword"])
+    # Dedup check — hard reject, no prompt
+    is_dup, dup_reason, _ = DedupChecker().check(
+        topic["title"], topic["keyword"],
+        pillar_name=topic.get("pillar_name"),
+        content_angle=topic.get("content_angle"),
+        exclude_topic_id=topic["id"],
+    )
     if is_dup:
-        console.print(f"[yellow]Warning: near-duplicate detected — {dup_reason}[/yellow]")
-        from rich.prompt import Prompt
-        choice = Prompt.ask("Proceed anyway?", choices=["y", "n"], default="n")
-        if choice != "y":
-            console.print("[dim]Skipped.[/dim]")
-            return
+        console.print(f"[red]Duplicate detected — rejecting topic.[/red]")
+        console.print(f"[dim]{dup_reason}[/dim]")
+        reject_topic(topic["id"])
+        return
 
     # Attach internal link candidates from post memory
     index = PostIndex()

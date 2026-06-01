@@ -30,6 +30,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Write Google credentials (if configured)
+        run: |
+          CREDS="${{ vars.GOOGLE_CREDENTIALS_JSON || secrets.GOOGLE_CREDENTIALS_JSON }}"
+          [ -n "$CREDS" ] && echo "$CREDS" > google-credentials.json || true
+
       - name: Run scheduler
         id: scheduler
         env:
@@ -38,9 +43,9 @@ jobs:
           BLOG_NICHE: ${{ vars.BLOG_NICHE }}
           TARGET_AUDIENCE: ${{ vars.TARGET_AUDIENCE }}
           BLOG_TONE: ${{ vars.BLOG_TONE }}
-          GOOGLE_CREDENTIALS_FILE: ${{ vars.GOOGLE_CREDENTIALS_FILE }}
-          GSC_SITE_URL: ${{ vars.GSC_SITE_URL }}
-          GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+          GOOGLE_CREDENTIALS_FILE: google-credentials.json
+          GSC_SITE_URL: ${{ vars.GSC_SITE_URL || secrets.GSC_SITE_URL }}
+          GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID || secrets.GA4_PROPERTY_ID }}
           APPROVAL_MODE: pr
           CONTENT_DIR: ${{ vars.CONTENT_DIR || 'posts/' }}
           MAX_POSTS_IN_RAMP: ${{ vars.MAX_POSTS_IN_RAMP || '3' }}
@@ -75,4 +80,3 @@ jobs:
           git add -f blogging_agent.db 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: persist scheduler state [skip ci]"
           git push
-

@@ -30,16 +30,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Write Google credentials
-        if: ${{ vars.GOOGLE_CREDENTIALS_JSON != '' }}
-        run: echo '${{ vars.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
+      - name: Write Google credentials (if configured)
+        run: |
+          CREDS="${{ vars.GOOGLE_CREDENTIALS_JSON || secrets.GOOGLE_CREDENTIALS_JSON }}"
+          [ -n "$CREDS" ] && echo "$CREDS" > google-credentials.json || true
 
       - name: Run monitor
         env:
           PROVIDER: ${{ vars.PROVIDER || 'openai' }}
           GOOGLE_CREDENTIALS_FILE: google-credentials.json
-          GSC_SITE_URL: ${{ vars.GSC_SITE_URL }}
-          GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+          GSC_SITE_URL: ${{ vars.GSC_SITE_URL || secrets.GSC_SITE_URL }}
+          GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID || secrets.GA4_PROPERTY_ID }}
           CONTENT_DIR: ${{ vars.CONTENT_DIR || 'posts/' }}
           PERFORMANCE_CHECK_DAYS: ${{ vars.PERFORMANCE_CHECK_DAYS || '30' }}
         run: python main.py monitor

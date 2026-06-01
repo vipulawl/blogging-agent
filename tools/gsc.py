@@ -2,13 +2,18 @@ from datetime import datetime, timedelta
 import config
 
 _client = None
+_client_error: str | None = None
 
 
 def _get_client():
-    global _client
+    global _client, _client_error
     if _client:
         return _client
     if not config.GOOGLE_CREDENTIALS_FILE or not config.GSC_SITE_URL:
+        _client_error = (
+            "GOOGLE_CREDENTIALS_FILE not configured" if not config.GOOGLE_CREDENTIALS_FILE
+            else "GSC_SITE_URL not configured"
+        )
         return None
     try:
         from googleapiclient.discovery import build
@@ -18,9 +23,17 @@ def _get_client():
             scopes=["https://www.googleapis.com/auth/webmasters.readonly"]
         )
         _client = build("searchconsole", "v1", credentials=credentials)
+        _client_error = None
         return _client
-    except Exception:
+    except Exception as e:
+        _client_error = str(e)
         return None
+
+
+def get_client_error() -> str | None:
+    """Return the last client initialization error, or None if connected."""
+    _get_client()
+    return _client_error
 
 
 def get_top_queries(days: int = 28) -> list[dict]:

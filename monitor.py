@@ -4,8 +4,16 @@ import config
 from storage.db import (
     get_all_post_memory, save_performance_snapshot, get_latest_snapshots,
 )
-from tools.gsc import get_page_performance
-from tools.ga4 import get_top_pages
+from tools.gsc import get_page_performance, get_client_error as gsc_client_error
+from tools.ga4 import get_top_pages, get_client_error as ga4_client_error
+
+
+def _slug_from_path(path: str) -> str:
+    """Extract slug from a URL path, stripping trailing slash and .html extension."""
+    slug = path.rstrip("/").rsplit("/", 1)[-1]
+    if slug.endswith(".html"):
+        slug = slug[:-5]
+    return slug
 
 
 def _compute_health(gsc_clicks: int, gsc_impressions: int, gsc_position: float,
@@ -59,12 +67,18 @@ def run_monitor() -> None:
     gsc_pages = get_page_performance(days=90)
     ga4_pages = get_top_pages(days=90, limit=200)
 
+    gsc_err = gsc_client_error()
+    ga4_err = ga4_client_error()
+    if gsc_err:
+        console.print(f"[yellow]GSC unavailable: {gsc_err}[/yellow]")
+    if ga4_err:
+        console.print(f"[yellow]GA4 unavailable: {ga4_err}[/yellow]")
+
     gsc_by_slug: dict[str, dict] = {}
     for row in gsc_pages:
         if "error" in row:
             continue
-        page = row.get("page", "")
-        slug = page.rstrip("/").rsplit("/", 1)[-1]
+        slug = _slug_from_path(row.get("page", ""))
         if slug:
             gsc_by_slug[slug] = row
 
@@ -72,8 +86,7 @@ def run_monitor() -> None:
     for row in ga4_pages:
         if "error" in row:
             continue
-        path = row.get("page_path", "").rstrip("/")
-        slug = path.rsplit("/", 1)[-1]
+        slug = _slug_from_path(row.get("page_path", ""))
         if slug:
             ga4_by_slug[slug] = row.get("sessions", 0)
 

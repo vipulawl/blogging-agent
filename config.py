@@ -1,7 +1,9 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+_AGENT_DIR = Path(__file__).parent
+load_dotenv(_AGENT_DIR / ".env")
 
 # ── Provider ──────────────────────────────────────────────────────────────────
 # Options: "openai" | "ollama" | "anthropic"
@@ -50,7 +52,12 @@ BLOG_TONE = os.getenv("BLOG_TONE", "informative and engaging")
 BLOG_LANGUAGE = os.getenv("BLOG_LANGUAGE", "English")
 
 # ── Google APIs (optional) ────────────────────────────────────────────────────
-GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "")
+_creds_env = os.getenv("GOOGLE_CREDENTIALS_FILE", "")
+if not _creds_env:
+    _creds_auto = str(_AGENT_DIR / "google-credentials.json")
+    if Path(_creds_auto).exists():
+        _creds_env = _creds_auto
+GOOGLE_CREDENTIALS_FILE = _creds_env
 GSC_SITE_URL = os.getenv("GSC_SITE_URL", "")
 GA4_PROPERTY_ID = os.getenv("GA4_PROPERTY_ID", "")
 

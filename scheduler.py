@@ -3,7 +3,7 @@ from datetime import datetime
 
 from storage.db import (
     get_all_topics, get_published_today_count, get_published_count_last_n_days,
-    save_scheduler_decision,
+    save_scheduler_decision, reject_topic,
 )
 from dedup import DedupChecker
 from tools.gsc import get_top_queries
@@ -49,6 +49,22 @@ def evaluate(dry_run: bool = False, as_json: bool = False) -> dict:
         pass
 
     dedup = DedupChecker()
+
+    # Auto-reject queued topics that are duplicates of published/other queued content
+    clean_queued = []
+    for t in queued:
+        is_dup, _, _ = dedup.check(
+            t["title"], t["keyword"],
+            pillar_name=t.get("pillar_name"),
+            content_angle=t.get("content_angle"),
+            exclude_topic_id=t["id"],
+        )
+        if is_dup:
+            if not dry_run:
+                reject_topic(t["id"])
+        else:
+            clean_queued.append(t)
+    queued = clean_queued
 
     # Signal checks in priority order
     if published_today >= 1:

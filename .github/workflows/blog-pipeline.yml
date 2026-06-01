@@ -10,6 +10,10 @@ on:
         type: choice
         options: [pipeline, research, write, refresh]
         default: pipeline
+      topic_id:
+        description: 'Topic ID to write (write action only, leave blank for highest priority)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -39,9 +43,9 @@ jobs:
       CONTENT_DIR:        ${{ vars.CONTENT_DIR }}
       REPO_DIR:           ${{ github.workspace }}
       GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
-      GSC_SITE_URL:       ${{ secrets.GSC_SITE_URL }}
-      GA4_PROPERTY_ID:    ${{ secrets.GA4_PROPERTY_ID }}
-      GOOGLE_CREDENTIALS_FILE: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' && 'google-credentials.json' || '' }}
+      GSC_SITE_URL:       ${{ vars.GSC_SITE_URL || secrets.GSC_SITE_URL }}
+      GA4_PROPERTY_ID:    ${{ vars.GA4_PROPERTY_ID || secrets.GA4_PROPERTY_ID }}
+      GOOGLE_CREDENTIALS_FILE: google-credentials.json
       MAX_ARTICLES_PER_DAY:       ${{ vars.MAX_ARTICLES_PER_DAY || '1' }}
       MIN_QUEUE_SIZE:             ${{ vars.MIN_QUEUE_SIZE || '3' }}
       MIN_TOPICS_PER_RESEARCH:    ${{ vars.MIN_TOPICS_PER_RESEARCH || '3' }}
@@ -67,8 +71,9 @@ jobs:
           git config user.email "bot@noreply.github.com"
 
       - name: Write Google credentials (if configured)
-        if: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' }}
-        run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > google-credentials.json
+        run: |
+          CREDS="${{ vars.GOOGLE_CREDENTIALS_JSON || secrets.GOOGLE_CREDENTIALS_JSON }}"
+          [ -n "$CREDS" ] && echo "$CREDS" > google-credentials.json || true
 
       # ── Pipeline: checkpointed steps so dashboard sees mid-run state ──
 
@@ -85,7 +90,12 @@ jobs:
 
       - name: Write
         if: ${{ !github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'write' }}
-        run: python main.py write
+        run: |
+          TOPIC_ARG=""
+          if [ -n "${{ github.event.inputs.topic_id }}" ]; then
+            TOPIC_ARG="--topic-id ${{ github.event.inputs.topic_id }}"
+          fi
+          python main.py write $TOPIC_ARG
 
       - name: 📡 DB checkpoint
         if: ${{ always() && (!github.event.inputs.action || github.event.inputs.action == 'pipeline' || github.event.inputs.action == 'write') }}

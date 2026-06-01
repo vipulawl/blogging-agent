@@ -355,7 +355,11 @@ class ResearchAgent(BaseAgent):
             return get_google_trends(inputs["topic"])
         elif name == "save_topic":
             from dedup import DedupChecker
-            is_dup, reason, match = DedupChecker().check(inputs["title"], inputs["keyword"])
+            is_dup, reason, match = DedupChecker().check(
+                inputs["title"], inputs["keyword"],
+                pillar_name=inputs.get("pillar_name"),
+                content_angle=inputs.get("content_angle"),
+            )
             if is_dup:
                 self._topics_skipped += 1
                 return {
