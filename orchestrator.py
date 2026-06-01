@@ -17,7 +17,7 @@ from agents.editor import EditorAgent
 from agents.strategy import StrategyAgent
 from agents.refresh import RefreshAgent
 from storage.db import (
-    claim_topic, reject_topic, get_pending_drafts,
+    claim_topic, reject_topic, increment_write_attempts, get_pending_drafts,
     get_latest_draft_for_topic, approve_draft, reject_draft,
     get_active_strategy, save_strategy,
     get_pending_refreshes, mark_refresh_done, was_recently_refreshed,
@@ -94,6 +94,34 @@ def run_research() -> int:
     return net_new
 
 
+def _validate_draft(draft: dict, topic: dict) -> list[str]:
+    """Structural validation before the editor runs. Returns list of failure reasons."""
+    failures = []
+    content = draft.get("content", "")
+    keyword = (topic.get("keyword") or "").lower()
+
+    word_count = len(content.split())
+    if word_count < config.MIN_WORD_COUNT:
+        failures.append(f"Word count {word_count} < minimum {config.MIN_WORD_COUNT}")
+
+    meta = draft.get("meta_description") or ""
+    if not (100 <= len(meta) <= 165):
+        failures.append(f"Meta description length {len(meta)} not in 100–165 char range")
+
+    h2_count = content.count("## ")
+    if h2_count < 2:
+        failures.append(f"Only {h2_count} H2 heading(s) — need at least 2")
+
+    if keyword and keyword not in content.lower():
+        failures.append(f"Primary keyword '{topic['keyword']}' not found in content")
+
+    tags = draft.get("tags") or []
+    if not tags:
+        failures.append("Tags list is empty")
+
+    return failures
+
+
 def run_write(topic_id: int = None):
     topic = claim_topic(topic_id)
     if not topic:
@@ -125,24 +153,38 @@ def run_write(topic_id: int = None):
         [topic["keyword"]] + topic.get("research_brief", "").split()[:10]
     )
 
-    console.print("[bold blue]Writer Agent[/bold blue] — writing article...")
-    WriterAgent(_client()).write_article(topic)
+    try:
+        console.print("[bold blue]Writer Agent[/bold blue] — writing article...")
+        WriterAgent(_client()).write_article(topic)
 
-    draft = get_latest_draft_for_topic(topic["id"])
-    if not draft:
-        console.print("[red]Writer did not save a draft. Check API key and try again.[/red]")
+        draft = get_latest_draft_for_topic(topic["id"])
+        if not draft:
+            raise RuntimeError("Writer did not save a draft — check API key and logs")
+
+        draft["keyword"] = topic["keyword"]
+        draft["research_brief"] = topic.get("research_brief", "")
+
+        failures = _validate_draft(draft, topic)
+        if failures:
+            console.print("[red]Draft validation failed:[/red]")
+            for reason in failures:
+                console.print(f"  [dim]• {reason}[/dim]")
+            reject_draft(draft["id"])
+            raise ValueError(f"Validation: {'; '.join(failures)}")
+
+        console.print("[bold blue]Editor Agent[/bold blue] — reviewing and editing...")
+        EditorAgent(_client()).edit_article(draft)
+
+    except Exception as e:
+        console.print(f"[red]Write failed: {e}[/red]")
+        increment_write_attempts(topic["id"], str(e))
         return
-
-    draft["keyword"] = topic["keyword"]
-    draft["research_brief"] = topic.get("research_brief", "")
-
-    console.print("[bold blue]Editor Agent[/bold blue] — reviewing and editing...")
-    EditorAgent(_client()).edit_article(draft)
 
     # Re-fetch the edited draft
     edited = get_latest_draft_for_topic(topic["id"])
     if not edited:
         console.print("[red]Editor did not save draft.[/red]")
+        increment_write_attempts(topic["id"], "Editor did not save draft")
         return
 
     edited["pillar_name"] = topic.get("pillar_name")

@@ -1,4 +1,5 @@
 import json
+import re
 from .base import BaseAgent
 from tools.search import web_search
 from tools.serp import analyze_serp, find_competitors_for_niche
@@ -249,6 +250,47 @@ class StrategyAgent(BaseAgent):
                 f"find content gaps, and save the strategy."
             )
         self.run(prompt, system, TOOLS, max_iterations=25)
+
+    def refresh_pillar_priorities(self, performance_summary: str) -> dict:
+        """Single API call (no tool loop) that returns a JSON priority patch for the active strategy."""
+        from storage.db import get_active_strategy
+        strategy = get_active_strategy()
+        if not strategy:
+            return {}
+
+        pillar_names = ", ".join(p["name"] for p in strategy.get("content_pillars", []))
+        prompt = (
+            f"Analyze this blog content performance data and advise on content pillar priorities.\n\n"
+            f"Content pillars: {pillar_names}\n\n"
+            f"Performance data (last 90 days):\n{performance_summary}\n\n"
+            f"Return a JSON object with exactly these keys:\n"
+            f'- "deprioritize": list of pillar names that are underperforming '
+            f"(avg position > 30, low clicks, or many flagged posts)\n"
+            f'- "boost": list of pillar names that are performing well (low avg position, good clicks)\n'
+            f'- "notes": one sentence with your top recommendation\n\n'
+            f"Return ONLY valid JSON, no other text."
+        )
+
+        try:
+            if self.provider in ("openai", "ollama"):
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    max_tokens=512,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = response.choices[0].message.content or "{}"
+            else:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=512,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw = response.content[0].text if response.content else "{}"
+
+            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+            return json.loads(json_match.group()) if json_match else json.loads(raw)
+        except Exception:
+            return {}
 
     def _execute_tool(self, name: str, inputs: dict):
         if name == "crawl_own_site":

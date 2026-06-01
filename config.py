@@ -86,6 +86,8 @@ MAX_ARTICLES_PER_DAY = int(os.getenv("MAX_ARTICLES_PER_DAY", "1"))
 # ── Smart systems ────────────────────────────────────────────────────────────
 # Jaccard similarity threshold above which a topic is considered a duplicate
 DEDUP_THRESHOLD = float(os.getenv("DEDUP_THRESHOLD", "0.80"))
+# Minimum word count for a draft to pass validation before the editor runs
+MIN_WORD_COUNT = int(os.getenv("MIN_WORD_COUNT", "600"))
 # Days after publication before a post is eligible for performance flagging
 PERFORMANCE_CHECK_DAYS = int(os.getenv("PERFORMANCE_CHECK_DAYS", "30"))
 # Set to "true" in GitHub Actions to execute corrections without terminal prompts

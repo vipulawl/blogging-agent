@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 import config
-from storage.db import init_db, get_all_topics
+from storage.db import init_db, get_all_topics, get_failed_topics
 
 Path("logs").mkdir(exist_ok=True)
 
@@ -37,9 +37,11 @@ logging.basicConfig(
 log = logging.getLogger("daemon")
 
 _stop = False
+_last_failed_review: datetime | None = None
 
-MONITOR_INTERVAL_DAYS  = 7
-REFRESH_INTERVAL_DAYS  = 14
+MONITOR_INTERVAL_DAYS    = 7
+REFRESH_INTERVAL_DAYS    = 14
+FAILED_REVIEW_INTERVAL_DAYS = 7
 
 
 def _handle_signal(sig, frame):
@@ -133,6 +135,26 @@ def main():
                 log.info(f"Write complete. Articles today: {articles_today}/{config.MAX_ARTICLES_PER_DAY}")
             except Exception as e:
                 log.error(f"Write failed: {e}", exc_info=True)
+
+            # Log failed topics and emit a weekly summary if due
+            try:
+                failed = get_failed_topics()
+                if failed:
+                    log.info(f"{len(failed)} topic(s) in 'failed' status")
+                    global _last_failed_review
+                    now = datetime.now()
+                    due = (_last_failed_review is None or
+                           (now - _last_failed_review).total_seconds() / 86400 >= FAILED_REVIEW_INTERVAL_DAYS)
+                    if due:
+                        log.warning(f"=== FAILED TOPICS WEEKLY SUMMARY ({len(failed)} total) ===")
+                        for t in failed:
+                            attempts = t.get("write_attempts") or 0
+                            error = (t.get("last_error") or "no error recorded")[:120]
+                            log.warning(f"  #{t['id']} '{t['title']}' — {attempts} attempt(s): {error}")
+                        _last_failed_review = now
+            except Exception as e:
+                log.error(f"Failed topics check error: {e}")
+
         elif articles_today >= config.MAX_ARTICLES_PER_DAY:
             log.info(f"Daily limit reached ({config.MAX_ARTICLES_PER_DAY}). Resuming tomorrow.")
         elif queued == 0:

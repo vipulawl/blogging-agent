@@ -164,3 +164,74 @@ def run_monitor() -> None:
     )
     if flagged_count:
         console.print("[dim]Run: python main.py correct[/dim]")
+
+    _update_strategy_from_performance()
+
+
+def _update_strategy_from_performance() -> None:
+    """Query pillar-level performance and ask the StrategyAgent to update priority notes."""
+    import json
+    import config
+    from storage.db import get_conn, get_active_strategy
+
+    strategy = get_active_strategy()
+    if not strategy:
+        return
+
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT
+                pm.pillar_name,
+                ROUND(AVG(CASE WHEN ps.gsc_position > 0 THEN ps.gsc_position END), 1) AS avg_position,
+                SUM(ps.gsc_clicks) AS total_clicks,
+                SUM(CASE WHEN ps.flag != '' THEN 1 ELSE 0 END) AS flagged_count,
+                COUNT(*) AS post_count
+            FROM performance_snapshots ps
+            JOIN post_memory pm ON ps.slug = pm.slug
+            WHERE ps.snapshot_date >= date('now', '-90 days')
+              AND pm.pillar_name IS NOT NULL
+              AND pm.pillar_name != ''
+            GROUP BY pm.pillar_name
+        """).fetchall()
+
+    if not rows:
+        return
+
+    lines = []
+    for r in rows:
+        avg_pos = r["avg_position"] or 0.0
+        lines.append(
+            f"- {r['pillar_name']}: avg_position={avg_pos:.1f}, "
+            f"clicks={r['total_clicks'] or 0}, "
+            f"flagged={r['flagged_count'] or 0}/{r['post_count']} posts"
+        )
+    performance_summary = "\n".join(lines)
+
+    try:
+        if config.STRATEGY_PROVIDER == "openai" and config.OPENAI_API_KEY:
+            from openai import OpenAI
+            client = OpenAI(api_key=config.OPENAI_API_KEY)
+            provider = "openai"
+        elif config.PROVIDER == "openai" and config.OPENAI_API_KEY:
+            from openai import OpenAI
+            client = OpenAI(api_key=config.OPENAI_API_KEY)
+            provider = "openai"
+        else:
+            import anthropic
+            client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+            provider = "anthropic"
+
+        from agents.strategy import StrategyAgent
+        agent = StrategyAgent(client, model=config.STRATEGY_MODEL, provider=provider)
+        patch = agent.refresh_pillar_priorities(performance_summary)
+    except Exception:
+        return
+
+    if not patch:
+        return
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE strategy SET performance_notes = ? WHERE is_active = 1",
+            (json.dumps(patch),),
+        )

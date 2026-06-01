@@ -470,4 +470,23 @@ def _format_strategy(strategy: dict | None) -> str:
     if strategy.get("strategic_summary"):
         lines.append(f"\nStrategy: {strategy['strategic_summary']}")
 
+    # Inject performance-based pillar priority notes when available
+    raw_notes = strategy.get("performance_notes")
+    if raw_notes:
+        try:
+            import json as _json
+            pnotes = _json.loads(raw_notes) if isinstance(raw_notes, str) else raw_notes
+            if pnotes.get("deprioritize"):
+                lines.append(
+                    f"\n⚠ Underperforming pillars — reduce coverage: {', '.join(pnotes['deprioritize'])}"
+                )
+            if pnotes.get("boost"):
+                lines.append(
+                    f"✓ High-performing pillars — prioritise more content: {', '.join(pnotes['boost'])}"
+                )
+            if pnotes.get("notes"):
+                lines.append(f"Performance insight: {pnotes['notes']}")
+        except Exception:
+            pass
+
     return "\n".join(lines)

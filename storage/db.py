@@ -189,12 +189,15 @@ def init_db():
         for migration in [
             "ALTER TABLE topics ADD COLUMN pillar_name TEXT",
             "ALTER TABLE topics ADD COLUMN content_angle TEXT",
+            "ALTER TABLE topics ADD COLUMN write_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE topics ADD COLUMN last_error TEXT",
             "ALTER TABLE post_memory ADD COLUMN pillar_name TEXT",
             "ALTER TABLE agent_runs ADD COLUMN run_summary TEXT",
             "ALTER TABLE agent_tool_calls ADD COLUMN quality_signal TEXT DEFAULT 'ok'",
             "ALTER TABLE post_memory ADD COLUMN content_angle TEXT",
             "ALTER TABLE agent_tool_calls ADD COLUMN iteration_num INTEGER DEFAULT 0",
             "ALTER TABLE strategy ADD COLUMN product_summary TEXT",
+            "ALTER TABLE strategy ADD COLUMN performance_notes TEXT",
             """CREATE TABLE IF NOT EXISTS competitor_sitemap_status (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 competitor_url TEXT UNIQUE NOT NULL,
@@ -262,6 +265,31 @@ def reject_topic(topic_id: int) -> None:
     """Mark a topic as rejected without touching any draft."""
     with get_conn() as conn:
         conn.execute("UPDATE topics SET status = 'rejected' WHERE id = ?", (topic_id,))
+
+
+def increment_write_attempts(topic_id: int, error_msg: str = None) -> None:
+    """Increment write_attempts. Resets topic to 'queued' for retry; 'failed' after 3 attempts."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT write_attempts FROM topics WHERE id = ?", (topic_id,)
+        ).fetchone()
+        if not row:
+            return
+        new_attempts = (row["write_attempts"] or 0) + 1
+        new_status = "failed" if new_attempts >= 3 else "queued"
+        conn.execute(
+            "UPDATE topics SET write_attempts = ?, last_error = ?, status = ? WHERE id = ?",
+            (new_attempts, (error_msg or "")[:500], new_status, topic_id),
+        )
+
+
+def get_failed_topics() -> list[dict]:
+    """Return topics with status = 'failed'."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM topics WHERE status = 'failed' ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def get_next_topic() -> dict | None:
